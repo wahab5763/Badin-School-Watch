@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-family: Inter, sans-serif;
+  background: #ecf2f6;
+  color: #0d1417;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background:
+    radial-gradient(circle at top right, rgba(42, 127, 170, 0.15), transparent 28%),
+    linear-gradient(180deg, #eff4f7 0%, #ecf2f6 35%, #edf3f7 100%);
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23n)' opacity='0.9'/%3E%3C/svg%3E");
+  background-size: 240px 240px;
+  z-index: 2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(30, 42, 47, 0.25);
+  border-radius: 999px;
+}
+
+.metric-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(30, 42, 47, 0.08);
+}
+
+.map-grid {
+  background-image:
+    linear-gradient(rgba(30, 42, 47, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 42, 47, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.hero-gradient {
+  background:
+    linear-gradient(180deg, rgba(13,20,23,0.46) 0%, rgba(13,20,23,0.72) 44%, rgba(13,20,23,0.95) 90%),
+    radial-gradient(circle at bottom right, rgba(42, 127, 170, 0.28), transparent 34%);
+}
+
+.card-hover {
+  transition: transform 240ms cubic-bezier(0.25, 0.46, 0.45, 0.94), box-shadow 240ms ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 18px 45px rgba(30, 42, 47, 0.12);
+}
+
+.kpi-ring {
+  background: conic-gradient(#2a7faa var(--value), rgba(42, 127, 170, 0.12) 0deg);
+}

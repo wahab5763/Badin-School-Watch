@@ -1,0 +1,1757 @@
+for live attendence through API we can get from:
+from MneDict import *
+
+
+class MneAttSpider(scrapy.Spider):
+    name = 'MneAtt'
+
+    start_urls = start_url
+    headers = header
+
+    def parse(self, response):
+        id_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetSchoolById/{}'
+        for ids in read_excel():
+            yield scrapy.Request(id_url.format(ids), callback=self.school_info, headers=self.headers)
+
+    def school_info(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+        School_Prefix = data['School_Prefix']
+        School_Name = data['School_Name']
+        School_Full = School_Prefix + ' ' + School_Name
+        School_Semis = data['School_SEMIS_Code']
+        School_Gender = data['Gender']
+        School_Level = data['Level']
+        School_UC = data['UC_Name']
+        School_Taluka = data['Tehsil_Name']
+        School_District = data['District_Name']
+
+        old_url = response.url.strip('https://mne.seld.gos.pk/Services/api//Schools/GetSchoolById/')
+        new_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetMSchoollastvisitsById?SchoolId=' + old_url
+        School_Url = 'https://mne.seld.gos.pk/Portal/#/SchoolPerformaEvaluation?school_Id=' + str(old_url)
+        School_Id = str(old_url)
+        yield scrapy.Request(new_url, callback=self.monitoring_id, headers=self.headers,
+                             meta={'School_Url': School_Url, 'School_Id': School_Id, 'School_Name': School_Full,
+                                   'School_Semis': School_Semis,
+                                   'School_Gender': School_Gender, 'School_Level': School_Level,
+                                   'School_UC': School_UC, 'School_Taluka': School_Taluka,
+                                   'School_District': School_District})
+
+    # To scrap School Id, User from Last Visit API
+    def monitoring_id(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_District = response.meta.get('School_District')
+        School_Url = response.meta.get('School_Url')
+        School_Id = response.meta.get('School_Id')
+
+        # To scrap School Ids with a for loop, from Last Visit API.
+        for visits in data['Data'][0:1]:
+            MA_Name = visits['User_Name']
+            Visit_Date = visits['Monitoring_Start_Date'][0:10]
+            Visit_Time = visits['Monitoring_Start_Date'][11:]
+            Monitoring_Id = visits['Monitoring_ID']
+
+            base_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetMonitoringDetailsByMonitoringId?MonitoringId='
+            url = base_url + str(Monitoring_Id)
+            request = scrapy.Request(url, callback=self.school_census, headers=self.headers,
+                                     meta={'School_Url': School_Url, 'School_Id': School_Id,
+                                           'School_Name': School_Name, 'School_Semis': School_Semis,
+                                           'School_Gender': School_Gender, 'School_Level': School_Level,
+                                           'School_UC': School_UC, 'School_Taluka': School_Taluka,
+                                           'School_District': School_District, 'MA_Name': MA_Name,
+                                           'Visit_Date': Visit_Date, 'Visit_Time': Visit_Time,
+                                           'Monitoring_Id': Monitoring_Id})
+
+            yield request
+
+    def school_census(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_District = response.meta.get('School_District')
+        School_Url = response.meta.get('School_Url')
+        School_Id = response.meta.get('School_Id')
+
+        MA_Name = response.meta.get('MA_Name')
+        Visit_Date = response.meta.get('Visit_Date')
+        Visit_Time = response.meta.get('Visit_Time')
+        Monitoring_Id = response.meta.get('Monitoring_Id')
+
+        # TO SCRAP CENSUS DATA:
+        census_data = data['Data']
+        if census_data:
+            School_Status = census_data[0]['Input']
+            Closed_Reason = census_data[1]['Input']
+            Status_Comment = census_data[2]['Input']
+
+            base_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetTeachersAttendanceByMonitoringId?MonitoringId='
+            url = base_url + str(Monitoring_Id)
+            request = scrapy.Request(url, callback=self.school_att, headers=self.headers,
+                                     meta={'School_Url': School_Url, 'School_Id': School_Id,
+                                           'School_Name': School_Name, 'School_Semis': School_Semis,
+                                           'School_Gender': School_Gender, 'School_Level': School_Level,
+                                           'School_UC': School_UC, 'School_Taluka': School_Taluka,
+                                           'School_District': School_District, 'MA_Name': MA_Name,
+                                           'Visit_Date': Visit_Date, 'Visit_Time': Visit_Time,
+                                           'Monitoring_Id': Monitoring_Id,
+                                           'School_Status': School_Status, 'Closed_Reason': Closed_Reason,
+                                           'Status_Comment': Status_Comment})
+
+            yield request
+
+    def school_att(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_Id = response.meta.get('School_Id')
+
+        MA_Name = response.meta.get('MA_Name')
+        Visit_Date = response.meta.get('Visit_Date')
+        Visit_Time = response.meta.get('Visit_Time')
+
+        School_Status = response.meta.get('School_Status')
+        Closed_Reason = response.meta.get('Closed_Reason')
+        Status_Comment = response.meta.get('Status_Comment')
+
+        # 1) To scrap Data of employees attendance status:
+        for emp in data['Data']:
+            Emp_MneId = emp['Employee_Id']
+            Emp_Name = emp['Employee_Name']
+            Emp_CNIC = emp['Employee_CNIC']
+            Emp_Present = emp['Present']
+            Emp_Leave = emp['Leave_Type']
+            Emp_Ilmi = emp['Msg_Sent_to_ILMI']
+            Emp_Remarks = emp['Remarks']
+            Emp_Absent = emp['Absent_Reason']
+            Absent_from = emp['Absent_From']
+            Absent_to = emp['Absent_To']
+        #
+        #
+        # # 2) To scrap Data of Absents/Absconders:
+        # for emp in data['Data']:
+        #     if emp['Present'] == 'No' and (not emp['Absent_Reason'] or emp['Absent_Reason'] == 'Absconder'):
+        #         Emp_MneId = emp['Employee_Id']
+        #         Emp_Name = emp['Employee_Name']
+        #         Emp_CNIC = emp['Employee_CNIC']
+        #         Emp_Present = emp['Present']
+        #         Emp_Leave = emp['Leave_Type']
+        #         Emp_Ilmi = emp['Msg_Sent_to_ILMI']
+        #         Emp_Absent = emp['Absent_Reason']
+        #         Absent_from = emp['Absent_From']
+        #         Absent_to = emp['Absent_To']
+        #         if not Emp_Absent:
+        #             Emp_Absent = 'Absent'
+        #         Emp_Remarks = emp['Remarks']
+        #
+        # # 3) To scrap Data of Present Employees:
+        # for emp in data['Data']:
+        #     if emp['Present'] == 'Yes':
+        #         Emp_MneId = emp['Employee_Id']
+        #         Emp_Name = emp['Employee_Name']
+        #         Emp_CNIC = emp['Employee_CNIC']
+        #         Emp_Present = emp['Present']
+        #         Emp_Leave = emp['Leave_Type']
+        #         Emp_Ilmi = emp['Msg_Sent_to_ILMI']
+        #         Emp_Remarks = emp['Remarks']
+        #         Emp_Absent = emp['Absent_Reason']
+        #         Absent_from = emp['Absent_From']
+        #         Absent_to = emp['Absent_To']
+        #         if not Emp_Absent:
+        #             Emp_Absent = 'Present'
+
+        # # 4) To scrap Data of Not-Present Employees:
+        # for emp in data['Data']:
+        #     if emp['Present'] == 'No':
+        #         Emp_MneId = emp['Employee_Id']
+        #         Emp_Name = emp['Employee_Name']
+        #         Emp_CNIC = emp['Employee_CNIC']
+        #         Emp_Present = emp['Present']
+        #         Emp_Leave = emp['Leave_Type']
+        #         Emp_Ilmi = emp['Msg_Sent_to_ILMI']
+        #         Emp_Remarks = emp['Remarks']
+        #         Emp_Absent = emp['Absent_Reason']
+        #         Absent_From = emp['Absent_From']
+        #         Absent_To = emp['Absent_To']
+        #         if not Emp_Absent:
+        #             Emp_Absent = 'Absent'
+
+            # Post method url formation using payload in Json Request, payload is Emp_MneId
+            profile_url = 'https://mne.seld.gos.pk/Services/api/Employee/GetEmployeeProfile'
+            payload = {'EmployeeId': ''}
+            payload['EmployeeId'] = Emp_MneId
+            yield JsonRequest(profile_url, data=payload, method='POST',
+                              callback=self.emp_profile, headers=self.headers,
+                              meta={'MA_Name': MA_Name, 'School_Taluka': School_Taluka, 'School_UC': School_UC,
+                                    'School_Level': School_Level, 'School_Gender': School_Gender,
+                                    'School_Semis': School_Semis,
+                                    'School_Name': School_Name, 'School_Status': School_Status,
+                                    'Closed_Reason': Closed_Reason,
+                                    'Status_Comment': Status_Comment,
+                                    'Visit_Date': Visit_Date, 'Visit_Time': Visit_Time,
+                                    'School_Id': School_Id,
+                                    'Emp_MneId': Emp_MneId, 'Emp_Name': Emp_Name, 'Emp_CNIC': Emp_CNIC,
+                                    'Emp_Present': Emp_Present,
+                                    'Emp_Leave': Emp_Leave, 'Emp_Ilmi': Emp_Ilmi, 'Emp_Absent': Emp_Absent,
+                                    'Emp_Remarks': Emp_Remarks, 'Absent_From': Absent_from, 'Absent_To': Absent_to
+                                    })
+
+    # Data scrapped from employee profile API
+    def emp_profile(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_Id = response.meta.get('School_Id')
+
+        MA_Name = response.meta.get('MA_Name')
+        Visit_Date = response.meta.get('Visit_Date')
+        Visit_Time = response.meta.get('Visit_Time')
+
+        School_Status = response.meta.get('School_Status')
+        Closed_Reason = response.meta.get('Closed_Reason')
+        Status_Comment = response.meta.get('Status_Comment')
+
+        Emp_MneId = response.meta.get('Emp_MneId')
+        Emp_Name = response.meta.get('Emp_Name')
+        Emp_CNIC = response.meta.get('Emp_CNIC')
+        Emp_Present = response.meta.get('Emp_Present')
+        Emp_Leave = response.meta.get('Emp_Leave')
+        Emp_Ilmi = response.meta.get('Emp_Ilmi')
+        Emp_Absent = response.meta.get('Emp_Absent')
+        Emp_Remarks = response.meta.get('Emp_Remarks')
+        Absent_From = response.meta.get('Absent_From')
+        Absent_To = response.meta.get('Absent_To')
+
+        Emp_PerNo = data['Data'][0]['EmployeeCode']
+        Emp_Desig = data['Data'][0]['EmployeeDesignations'][0]['Designations']
+        Emp_Gender = data['Data'][0]['Gender']
+        Emp_RegId = data['Data'][0]['Employee_Info_Id']
+        Emp_Cadre = data['Data'][0]['Employeeemployment'][0]['Cadre']
+        Emp_Status = data['Data'][0]['Employeeemployment'][0]['JobStatusType']
+
+        # Next URL formation with POST METHOD in Payload option in Header Request
+        summary_url = 'https://mne.seld.gos.pk/Services/api/Employee/GetEmployeeAttendence'
+        payloads = {'EmployeeId': ''}
+        payloads['EmployeeId'] = Emp_MneId
+
+        yield JsonRequest(summary_url, data=payloads, method='POST',
+                          callback=self.attendence_summary, headers=self.headers,
+                          meta={'MA_Name': MA_Name, 'School_Taluka': School_Taluka, 'School_UC': School_UC,
+                                'School_Level': School_Level, 'School_Gender': School_Gender,
+                                'School_Semis': School_Semis,
+                                'School_Name': School_Name, 'School_Status': School_Status,
+                                'Closed_Reason': Closed_Reason,
+                                'Status_Comment': Status_Comment,
+                                'Visit_Date': Visit_Date, 'Visit_Time': Visit_Time,
+                                'School_Id': School_Id,
+                                'Emp_MneId': Emp_MneId, 'Emp_Name': Emp_Name, 'Emp_CNIC': Emp_CNIC,
+                                'Emp_Present': Emp_Present,
+                                'Emp_Leave': Emp_Leave, 'Emp_Ilmi': Emp_Ilmi, 'Emp_Absent': Emp_Absent,
+                                'Emp_Remarks': Emp_Remarks,
+                                'Emp_PerNo': Emp_PerNo,
+                                'Emp_Desig': Emp_Desig,
+                                'Emp_Gender': Emp_Gender, 'Emp_RegId': Emp_RegId,
+                                'Emp_Cadre': Emp_Cadre,
+                                'Emp_Status': Emp_Status,
+                                'Absent_From': Absent_From, 'Absent_To': Absent_To
+                                })
+
+    # Employee attendence and visit summary scrap
+    def attendence_summary(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_Id = response.meta.get('School_Id')
+
+        MA_Name = response.meta.get('MA_Name')
+        Visit_Date = response.meta.get('Visit_Date')
+        Visit_Time = response.meta.get('Visit_Time')
+
+        School_Status = response.meta.get('School_Status')
+        Closed_Reason = response.meta.get('Closed_Reason')
+        Status_Comment = response.meta.get('Status_Comment')
+
+        Emp_MneId = response.meta.get('Emp_MneId')
+        Emp_Name = response.meta.get('Emp_Name')
+        Emp_CNIC = response.meta.get('Emp_CNIC')
+        Emp_Present = response.meta.get('Emp_Present')
+        Emp_Leave = response.meta.get('Emp_Leave')
+        Emp_Absent = response.meta.get('Emp_Absent')
+        Emp_Remarks = response.meta.get('Emp_Remarks')
+
+        Emp_PerNo = response.meta.get('Emp_PerNo')
+        Emp_Desig = response.meta.get('Emp_Desig')
+        Emp_Gender = response.meta.get('Emp_Gender')
+        Emp_RegId = response.meta.get('Emp_RegId')
+        Emp_Cadre = response.meta.get('Emp_Cadre')
+        Emp_Status = response.meta.get('Emp_Status')
+        Absent_From = response.meta.get('Absent_From')
+        Absent_To = response.meta.get('Absent_To')
+
+        Emp_Total_Absent = data['Data'][0]['Absents']
+        Emp_Total_Present = data['Data'][0]['Presents']
+        Emp_Total_Leaves = data['Data'][0]['Leaves']
+        Emp_Total_Visits = data['Data'][0]['TotalVisits']
+
+        main_url = 'https://mne.seld.gos.pk/FileUpload/Downloads/SchoolWiseProfileImages/SchoolsEmployee/28/'
+        profile_img_link = main_url + str(School_Id) + '/' + str(Emp_MneId) + '.jpg'
+        projile_img_name = School_Name + '_' + Emp_Name + '_' +Emp_Desig
+
+        Emp_Data = {'Visited_By': MA_Name, 'Taluka': School_Taluka, 'UC': School_UC,
+                    'School_Gender': School_Gender, 'Gender': Emp_Gender, 'Level': School_Level, 'Cadre': Emp_Cadre,
+                    'Semis_Code': School_Semis, 'School_Name': School_Name, 'Emp_Name': Emp_Name, 'Emp_CNIC': Emp_CNIC,
+                    'Designation': Emp_Desig, 'EMP_RegId': Emp_RegId, 'Personnel_NO': Emp_PerNo, 'Present': Emp_Present,
+                    'Absent_Type': Emp_Absent, 'Visit_Date': Visit_Date, 'Remarks': Emp_Remarks,
+                    'Absent_From': Absent_From, 'Absent_To': Absent_To,
+                    'Visit_Time': Visit_Time, 'School_Status': School_Status, 'Closed_Reason': Closed_Reason,
+                    'Profile_Name': projile_img_name, 'Profile_link': profile_img_link
+                    # 'Status_Comment': Status_Comment, 'School_Id': School_Id, 'Emp_MneId': Emp_MneId,
+                    # 'Leave_Type': Emp_Leave
+                    #  'Total_Visits': Emp_Total_Visits, 'Total_Present': Emp_Total_Present,
+                    # 'Total_Leaves': Emp_Total_Leaves, 'Total_Absent': Emp_Total_Absent
+                    }
+
+
+
+        Profile_Emp = {'Visited_By': MA_Name, 'Taluka': School_Taluka, 'UC': School_UC, 'Level': School_Level,
+                       'EMP_RegId': Emp_RegId, 'Cadre': Emp_Cadre,
+                       'Semis_Code': School_Semis, 'School_Id':School_Id, 'School_Name': School_Name,
+                       'Visit_Date': Visit_Date,
+                       'Emp_Name': Emp_Name, 'Designation': Emp_Desig, 'Personnel_NO': Emp_PerNo, 'Emp_CNIC': Emp_CNIC,
+                        'Absent_Type': Emp_Absent,
+                       'Profile_Name': projile_img_name, 'Profile_link': profile_img_link
+                       }
+
+
+        yield Profile_Emp
+
+
+
+
+for census:
+import math
+import pandas as pd
+from MneDict import *
+
+
+class MneCenSpider(scrapy.Spider):
+    name = 'mne'
+    start_urls = start_url
+    headers = header
+
+    def parse(self, response, **kwargs):
+        id_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetSchoolById/{}'
+        for ids in read_excel():
+            yield scrapy.Request(id_url.format(ids), callback=self.school_info, headers=self.headers)
+
+    def school_info(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        School_Prefix = data['School_Prefix']
+        School_Names = data['School_Name']
+        School_Name = School_Prefix + ' ' + School_Names
+        School_Semis = data['School_SEMIS_Code']
+        School_Gender = data['Gender']
+        School_Level = data['Level']
+        School_Latitude = data['LATITUDE']
+        School_Longitude = data['LONGITUDE']
+        GPS_Coordinates = School_Latitude + ', ' + School_Longitude
+        School_UC = data['UC_Name']
+        School_Taluka = data['Tehsil_Name']
+        School_District = data['District_Name']
+        Headmaster_Name = data['Headmaster_Name']
+        Headmaster_Phone_Number = data['Headmaster_Phone_Number']
+        Shift = data['Shift']
+
+        old_url = response.url.strip('https://mne.seld.gos.pk/Services/api//Schools/GetSchoolById/')
+        new_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetMSchoollastvisitsById?SchoolId=' + old_url
+        School_Url = 'https://mne.seld.gos.pk/Portal/#/SchoolPerformaEvaluation?school_Id=' + str(old_url)
+        School_Id = str(old_url)
+        yield scrapy.Request(new_url, callback=self.monitoring_id, headers=self.headers,
+                             meta={'School_Url': School_Url, 'School_Id': School_Id,
+                                   'School_Name': School_Name, 'School_Semis': School_Semis,
+                                   'School_Gender': School_Gender, 'School_Level': School_Level,
+                                   'GPS_Coordinates': GPS_Coordinates,
+                                   'School_UC': School_UC, 'School_Taluka': School_Taluka,
+                                   'School_District': School_District,
+                                   'Headmaster_Name': Headmaster_Name,
+                                   'Headmaster_Phone_Number': Headmaster_Phone_Number,
+                                   'Shift': Shift
+
+                                   })
+
+    # To scrap School Id, User from Last Visit API
+    def monitoring_id(self, response):
+
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        GPS_Coordinates = response.meta.get('GPS_Coordinates')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_District = response.meta.get('School_District')
+        School_Url = response.meta.get('School_Url')
+        School_Id = response.meta.get('School_Id')
+        Headmaster_Name = response.meta.get('Headmaster_Name')
+        Headmaster_Phone_Number = response.meta.get('Headmaster_Phone_Number')
+        Shift = response.meta.get('Shift')
+
+        # To scrap School Ids with a for loop, from Last Visit API.
+        for visits in data['Data'][0:1]:
+            MA_Name = visits['User_Name']
+            MA_ID = visits['User_id']
+            Schedule_Date = visits['Scheduled_Monitering_Date'][0:10]
+            Visit_Date_Time = visits['Monitoring_Start_Date']
+            Visit_Date = visits['Monitoring_Start_Date'][0:10]
+            Visit_Time = visits['Monitoring_Start_Date'][11:]
+            End_Time = visits['Monitoring_End_Date'][11:]
+            Monitoring_Id = visits['Monitoring_ID']
+
+            # stf_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetStaffAttendanceSummaryByMonitoringId?MonitoringId='
+            census_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetMonitoringDetailsByMonitoringId?MonitoringId='
+            url = census_url + str(Monitoring_Id)
+            request = scrapy.Request(url, callback=self.school_census, headers=self.headers,
+                                     meta={'School_Url': School_Url, 'School_Id': School_Id,
+                                           'School_Name': School_Name, 'School_Semis': School_Semis,
+                                           'School_Gender': School_Gender, 'School_Level': School_Level,
+                                           'GPS_Coordinates': GPS_Coordinates,
+                                           'School_UC': School_UC,
+                                           'School_Taluka': School_Taluka,
+                                           'School_District': School_District, 'MA_Name': MA_Name, 'MA_ID': MA_ID,
+                                           'Schedule_Date': Schedule_Date,
+                                           'Visit_Date': Visit_Date, 'Visit_Date_Time': Visit_Date_Time,
+                                           'Visit_Time': Visit_Time, 'End_Time': End_Time,
+                                           'Monitoring_Id': Monitoring_Id,
+                                           'Headmaster_Name': Headmaster_Name,
+                                           'Headmaster_Phone_Number': Headmaster_Phone_Number,
+                                           'Shift': Shift
+                                           })
+
+            yield request
+
+    def school_census(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+        meta = response.meta
+
+        # Extract metadata safely
+        School_Name = meta.get('School_Name', '')
+        School_Semis = meta.get('School_Semis', '')
+        School_Gender = meta.get('School_Gender', '')
+        School_Level = meta.get('School_Level', '')
+        GPS_Coordinates = meta.get('GPS_Coordinates', '')
+        School_UC = meta.get('School_UC', '')
+        School_Taluka = meta.get('School_Taluka', '')
+        School_District = meta.get('School_District', '')
+        School_Url = meta.get('School_Url', '')
+        School_Id = meta.get('School_Id', '')
+        Headmaster_Name = meta.get('Headmaster_Name', '')
+        Headmaster_Phone_Number = meta.get('Headmaster_Phone_Number', '')
+        Shift = meta.get('Shift', '')
+
+        MA_Name = meta.get('MA_Name', '')
+        MA_ID = meta.get('MA_ID', '')
+        Schedule_Date = meta.get('Schedule_Date', '')
+        Visit_Date = meta.get('Visit_Date', '')
+        Visit_Time = meta.get('Visit_Time', '')
+        Visit_Date_Time = meta.get('Visit_Date_Time', '')
+        End_Time = meta.get('End_Time', '')
+        Monitoring_Id = meta.get('Monitoring_Id', '')
+
+        census_data = data.get('Data', [])
+
+        # Safely get values using a helper function
+        def get_input(field):
+            return census_data.get(field, {}).get('Input', '') if isinstance(census_data, dict) else (
+                census_data[field]['Input'] if field < len(census_data) and 'Input' in census_data[field] else '')
+
+        if census_data:
+            ## School Status
+            School_Status = get_input(0)
+            Closed_Reason = get_input(1)
+            Status_Comment = get_input(2)
+            Status_Comment2 = get_input(6)
+            Final_Comment = get_input(112)
+            Final_Comment_2 = Closed_Reason + " | " + Status_Comment + " | " + Status_Comment2 + " | " + Final_Comment
+
+            ## Visit Coordinates
+            Visit_Latitude = get_input(3)
+            Visit_Longitude = get_input(4)
+            Visit_Coordinates = Visit_Latitude + ', ' + Visit_Longitude
+            # HM = Headmaster_Name + " | " + Headmaster_Phone_Number
+
+            ## SMC
+            SMC_Functional = get_input(7)
+            SMC_Last_Fund = get_input(8)
+            # SMC = SMC_Functional + " | " + SMC_Last_Fund
+
+            ## School Building
+            Building_ownership = get_input(13)
+            Building_Type = get_input(18)
+            Building_Condition = get_input(101)
+            # Building = Building_ownership + " | " + Building_Condition
+
+            ## Rooms
+            Total_Rooms = get_input(74)
+            Teaching_Rooms = get_input(75)
+            # Rooms = Total_Rooms + " | " + Teaching_Rooms
+
+            ## Boundary Wall
+            Boundary_Wall = get_input(19)
+            # BW_Comment = get_input(32)
+
+            ## Drinking Water
+            # Drinking_Water = get_input(21)
+            Drinking_Water_Source = get_input(97)
+            # DW_Comment = get_input(34)
+
+            ## Furniture
+            # Furniture_availability = get_input(46)
+            # Furniture_Comment = get_input(47)
+            teaching_capacity = get_input(114)
+            students_capacity = get_input(115)
+            # Furniture = teaching_capacity + " | " + students_capacity
+
+            ## Washrooms
+            Washrooms = get_input(25)
+            Total_WR = get_input(26)
+            Functional_WR = get_input(27)
+            Non_Functional_WR = get_input(28)
+            WR_Cleanliness = get_input(29)
+            Hand_Wash = get_input(30)
+            # WR_Comment = get_input(31)
+            WR_NF_Reason = get_input(96)
+            # WR = Functional_WR + " | " + Hand_Wash + " | " + WR_NF_Reason
+
+            ## Electricity
+            Electricity = get_input(56)
+            Electricity_Source = get_input(33)
+            Electricity_reason = get_input(98)
+            # Electricity_Comment = get_input(58)
+
+            ## Formulas: Calculate duration in minutes (rounded up)
+            try:
+                visit_dt = datetime.strptime(Visit_Time, "%H:%M:%S")
+                end_dt = datetime.strptime(End_Time, "%H:%M:%S")
+                duration_seconds = (end_dt - visit_dt).total_seconds()
+                duration = math.ceil(duration_seconds / 60)
+            except Exception:
+                duration = ''
+
+            Census_Data = {
+                'Semis_Code': School_Semis,
+                'School_Name': School_Name + " (" + School_Id + ")",
+                'Visited_By': MA_Name,
+                'Visit_Date': Visit_Date_Time,
+                'School_Status': School_Status,
+                'Duration': duration,
+                'HM': Headmaster_Name,
+                'HM_No': Headmaster_Phone_Number,
+                'Building_Ownership': Building_ownership,
+                'Building_Type': Building_Type,
+                'Building_Condition': Building_Condition,
+                'Rooms': Total_Rooms,
+                'CR': Teaching_Rooms,
+                'Boundary_Wall': Boundary_Wall,
+                'Drinking_Water': Drinking_Water_Source,
+                'WR_Total': Total_WR,
+                'WR_F': Functional_WR,
+                'WR_NF': Non_Functional_WR,
+                'WR_Reason': WR_NF_Reason,
+                'WR_HandWash': Hand_Wash,
+                'WR_Cleanliness': WR_Cleanliness,
+                'Electricity': Electricity_Source,
+                'Electricity_Reason': Electricity_reason,
+                'Fr_Teacher': teaching_capacity,
+                'Fr_STudents': students_capacity,
+                'SMC_Functional': SMC_Functional,
+                'SMC_Fund': SMC_Last_Fund,
+                'School_Comment': Final_Comment_2,
+
+
+
+
+
+
+
+
+            }
+
+            WR_Data = {
+                'School_Id': School_Id, 'Semis_Code': School_Semis,
+                'Washrooms': Washrooms, 'Total_WR': Total_WR, 'Functional_WR': Functional_WR,
+                'Non_Functional_WR': Non_Functional_WR, 'WR_NF_Reason': WR_NF_Reason,
+                'Hand_Wash': Hand_Wash, 'WR_Cleanliness': WR_Cleanliness
+            }
+
+            visit_data = {
+                'District': School_District, 'Visited_By': MA_Name, 'School_Taluka': School_Taluka,
+                'School_UC': School_UC, 'School_Level': School_Level,
+                'School_Id': School_Id, 'Semis_Code': School_Semis, 'School_Name': School_Name,
+                'Visit_Date': Visit_Date, 'School_Status': School_Status, 'GPS': GPS_Coordinates,
+                'Visit Coordinates': Visit_Coordinates
+            }
+
+            # Apply status mapping
+            status_mapping = {
+                "Closed During Visit": "CVD",
+                "Permanent Closed": "PC",
+                "Temporary Closed": "TC",
+                "Open": ""  # Replacing 'Open' with an empty string
+            }
+
+            visit_data['School_Status'] = status_mapping.get(visit_data['School_Status'], visit_data['School_Status'])
+            Census_Data['School_Status'] = status_mapping.get(Census_Data['School_Status'],
+                                                              Census_Data['School_Status'])
+
+            yield Census_Data
+
+
+for enrollment:
+from MneDict import *
+
+
+class MneEnlSpider(scrapy.Spider):
+    name = 'Enl'
+    start_urls = start_url
+    headers = header
+
+    def parse(self, response, **kwargs):
+        id_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetSchoolById/{}'
+        for ids in read_excel():
+            yield scrapy.Request(id_url.format(ids), callback=self.school_info, headers=self.headers)
+
+    def school_info(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        School_Prefix = data['School_Prefix']
+        School_Names = data['School_Name']
+        School_Name = School_Prefix + ' ' + School_Names
+        School_Semis = data['School_SEMIS_Code']
+        School_Gender = data['Gender']
+        School_Level = data['Level']
+        School_UC = data['UC_Name']
+        School_Taluka = data['Tehsil_Name']
+        School_District = data['District_Name']
+        School_HM = data['Headmaster_Name']
+        School_HM_No = str(data['Headmaster_Phone_Number'])
+
+        old_url = response.url.strip('https://mne.seld.gos.pk/Services/api//Schools/GetSchoolById/')
+        new_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetMSchoollastvisitsById?SchoolId=' + old_url
+        School_Url = 'https://mne.seld.gos.pk/Portal/#/SchoolPerformaEvaluation?school_Id=' + str(old_url)
+        School_Id = str(old_url)
+        yield scrapy.Request(new_url, callback=self.monitoring_id, headers=self.headers,
+                             meta={'School_Url': School_Url, 'School_Id': School_Id,
+                                   'School_Name': School_Name, 'School_Semis': School_Semis,
+                                   'School_Gender': School_Gender, 'School_Level': School_Level,
+                                   'School_UC': School_UC, 'School_Taluka': School_Taluka,
+                                   'School_District': School_District,
+                                   'School_HM': School_HM, 'School_HM_No': School_HM_No})
+
+    def monitoring_id(self, response):
+        Base_Url = 'https://mne.seld.gos.pk/Services/api//Schools/GetEnrolmentsByMonitoringId?MonitoringId='
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_District = response.meta.get('School_District')
+        School_Url = response.meta.get('School_Url')
+        School_Id = response.meta.get('School_Id')
+        School_HM = response.meta.get('School_HM')
+        School_HM_No = response.meta.get('School_HM_No')
+
+        # To scrap School Ids with a for loop, from Last Visit API.
+        for visits in data['Data'][0:1]:
+            MA_Name = visits['User_Name']
+            Visit_Date = visits['Monitoring_Start_Date'][0:10]
+            Monitoring_Id = visits['Monitoring_ID']
+
+            url = Base_Url + str(Monitoring_Id)
+            request = scrapy.Request(url, callback=self.school_enl, headers=self.headers,
+                                     meta={'School_Url': School_Url, 'School_Id': School_Id,
+                                           'School_Name': School_Name, 'School_Semis': School_Semis,
+                                           'School_Gender': School_Gender, 'School_Level': School_Level,
+                                           'School_UC': School_UC, 'School_Taluka': School_Taluka,
+                                           'School_District': School_District, 'MA_Name': MA_Name,
+                                           'Visit_Date': Visit_Date, 'Monitoring_Id': Monitoring_Id,
+                                           'School_HM': School_HM, 'School_HM_No': School_HM_No
+                                           })
+
+            yield request
+
+    def school_enl(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_District = response.meta.get('School_District')
+        School_Url = response.meta.get('School_Url')
+        School_Id = response.meta.get('School_Id')
+        School_HM = response.meta.get('School_HM')
+        School_HM_No = response.meta.get('School_HM_No')
+
+        MA_Name = response.meta.get('MA_Name')
+        Visit_Date = response.meta.get('Visit_Date')
+
+        School_Status = response.meta.get('School_Status')
+
+        cadre = response.meta.get('cadre')
+        staff = response.meta.get('staff')
+
+        # To scrap Enrollment Class Wise
+
+        EB_E = data['Data'][0]['Katchi']
+        EG_E = data['Data'][1]['Katchi']
+        ET_E = data['Data'][6]['Katchi']
+        PB_E = data['Data'][2]['Katchi']
+        PG_E = data['Data'][3]['Katchi']
+        PT_E = data['Data'][4]['Katchi']
+        DB_E = data['Data'][7]['Katchi']
+        DG_E = data['Data'][8]['Katchi']
+
+        EB_1 = data['Data'][0]['ClassI']
+        EG_1 = data['Data'][1]['ClassI']
+        ET_1 = data['Data'][6]['ClassI']
+        PB_1 = data['Data'][2]['ClassI']
+        PG_1 = data['Data'][3]['ClassI']
+        PT_1 = data['Data'][4]['ClassI']
+        DB_1 = data['Data'][7]['ClassI']
+        DG_1 = data['Data'][8]['ClassI']
+
+        EB_2 = data['Data'][0]['ClassII']
+        EG_2 = data['Data'][1]['ClassII']
+        ET_2 = data['Data'][6]['ClassII']
+        PB_2 = data['Data'][2]['ClassII']
+        PG_2 = data['Data'][3]['ClassII']
+        PT_2 = data['Data'][4]['ClassII']
+        DB_2 = data['Data'][7]['ClassII']
+        DG_2 = data['Data'][8]['ClassII']
+
+        EB_3 = data['Data'][0]['ClassIII']
+        EG_3 = data['Data'][1]['ClassIII']
+        ET_3 = data['Data'][6]['ClassIII']
+        PB_3 = data['Data'][2]['ClassIII']
+        PG_3 = data['Data'][3]['ClassIII']
+        PT_3 = data['Data'][4]['ClassIII']
+        DB_3 = data['Data'][7]['ClassIII']
+        DG_3 = data['Data'][8]['ClassIII']
+
+        EB_4 = data['Data'][0]['ClassIV']
+        EG_4 = data['Data'][1]['ClassIV']
+        ET_4 = data['Data'][6]['ClassIV']
+        PB_4 = data['Data'][2]['ClassIV']
+        PG_4 = data['Data'][3]['ClassIV']
+        PT_4 = data['Data'][4]['ClassIV']
+        DB_4 = data['Data'][7]['ClassIV']
+        DG_4 = data['Data'][8]['ClassIV']
+
+        EB_5 = data['Data'][0]['ClassV']
+        EG_5 = data['Data'][1]['ClassV']
+        ET_5 = data['Data'][6]['ClassV']
+        PB_5 = data['Data'][2]['ClassV']
+        PG_5 = data['Data'][3]['ClassV']
+        PT_5 = data['Data'][4]['ClassV']
+        DB_5 = data['Data'][7]['ClassV']
+        DG_5 = data['Data'][8]['ClassV']
+
+        EB_6 = data['Data'][0]['ClassVI']
+        EG_6 = data['Data'][1]['ClassVI']
+        ET_6 = data['Data'][6]['ClassVI']
+        PB_6 = data['Data'][2]['ClassVI']
+        PG_6 = data['Data'][3]['ClassVI']
+        PT_6 = data['Data'][4]['ClassVI']
+        DB_6 = data['Data'][7]['ClassVI']
+        DG_6 = data['Data'][8]['ClassVI']
+
+        EB_7 = data['Data'][0]['ClassVII']
+        EG_7 = data['Data'][1]['ClassVII']
+        ET_7 = data['Data'][6]['ClassVII']
+        PB_7 = data['Data'][2]['ClassVII']
+        PG_7 = data['Data'][3]['ClassVII']
+        PT_7 = data['Data'][4]['ClassVII']
+        DB_7 = data['Data'][7]['ClassVII']
+        DG_7 = data['Data'][8]['ClassVII']
+
+        EB_8 = data['Data'][0]['ClassVIII']
+        EG_8 = data['Data'][1]['ClassVIII']
+        ET_8 = data['Data'][6]['ClassVIII']
+        PB_8 = data['Data'][2]['ClassVIII']
+        PG_8 = data['Data'][3]['ClassVIII']
+        PT_8 = data['Data'][4]['ClassVIII']
+        DB_8 = data['Data'][7]['ClassVIII']
+        DG_8 = data['Data'][8]['ClassVIII']
+
+        EB_9_1 = data['Data'][0]['ClassIX_2']
+        EB_9_2 = data['Data'][0]['ClassIX_3_1']
+        EB_9_3 = data['Data'][0]['ClassIX_3_2']
+        EB_9_4 = data['Data'][0]['ClassIX_4']
+        EB_9_5 = data['Data'][0]['ClassIX_5']
+        DB_9_1 = data['Data'][7]['ClassIX_2']
+        DB_9_2 = data['Data'][7]['ClassIX_3_1']
+        DB_9_3 = data['Data'][7]['ClassIX_3_2']
+        DB_9_4 = data['Data'][7]['ClassIX_4']
+        DB_9_5 = data['Data'][7]['ClassIX_5']
+
+        EG_9_1 = data['Data'][1]['ClassIX_2']
+        EG_9_2 = data['Data'][1]['ClassIX_3_1']
+        EG_9_3 = data['Data'][1]['ClassIX_3_2']
+        EG_9_4 = data['Data'][1]['ClassIX_4']
+        EG_9_5 = data['Data'][1]['ClassIX_5']
+        DG_9_1 = data['Data'][8]['ClassIX_2']
+        DG_9_2 = data['Data'][8]['ClassIX_3_1']
+        DG_9_3 = data['Data'][8]['ClassIX_3_2']
+        DG_9_4 = data['Data'][8]['ClassIX_4']
+        DG_9_5 = data['Data'][8]['ClassIX_5']
+
+        ET_9_1 = data['Data'][6]['ClassIX_2']
+        ET_9_2 = data['Data'][6]['ClassIX_3_1']
+        ET_9_3 = data['Data'][6]['ClassIX_3_2']
+        ET_9_4 = data['Data'][6]['ClassIX_4']
+        ET_9_5 = data['Data'][6]['ClassIX_5']
+
+        PB_9_1 = data['Data'][2]['ClassIX_2']
+        PB_9_2 = data['Data'][2]['ClassIX_3_1']
+        PB_9_3 = data['Data'][2]['ClassIX_3_2']
+        PB_9_4 = data['Data'][2]['ClassIX_4']
+        PB_9_5 = data['Data'][2]['ClassIX_5']
+
+        PG_9_1 = data['Data'][3]['ClassIX_2']
+        PG_9_2 = data['Data'][3]['ClassIX_3_1']
+        PG_9_3 = data['Data'][3]['ClassIX_3_2']
+        PG_9_4 = data['Data'][3]['ClassIX_4']
+        PG_9_5 = data['Data'][3]['ClassIX_5']
+
+        PT_9_1 = data['Data'][4]['ClassIX_2']
+        PT_9_2 = data['Data'][4]['ClassIX_3_1']
+        PT_9_3 = data['Data'][4]['ClassIX_3_2']
+        PT_9_4 = data['Data'][4]['ClassIX_4']
+        PT_9_5 = data['Data'][4]['ClassIX_5']
+
+        DT_E = int(DB_E) + int(DG_E)
+        DT_1 = int(DB_1) + int(DG_1)
+        DT_2 = int(DB_2) + int(DG_2)
+        DT_3 = int(DB_3) + int(DG_3)
+        DT_4 = int(DB_4) + int(DG_4)
+        DT_5 = int(DB_5) + int(DG_5)
+        DT_6 = int(DB_6) + int(DG_6)
+        DT_7 = int(DB_7) + int(DG_7)
+        DT_8 = int(DB_8) + int(DG_8)
+
+        EB_9 = int(EB_9_1) + int(EB_9_2) + int(EB_9_3) + int(EB_9_4) + int(EB_9_5)
+        EG_9 = int(EG_9_1) + int(EG_9_2) + int(EG_9_3) + int(EG_9_4) + int(EG_9_5)
+        ET_9 = int(ET_9_1) + int(ET_9_2) + int(ET_9_3) + int(ET_9_4) + int(ET_9_5)
+        PB_9 = int(PB_9_1) + int(PB_9_2) + int(PB_9_3) + int(PB_9_4) + int(PB_9_5)
+        PG_9 = int(PG_9_1) + int(PG_9_2) + int(PG_9_3) + int(PG_9_4) + int(PG_9_5)
+        PT_9 = int(PT_9_1) + int(PT_9_2) + int(PT_9_3) + int(PT_9_4) + int(PT_9_5)
+
+        DB_9 = int(DB_9_1) + int(DB_9_2) + int(DB_9_3) + int(DB_9_4) + int(DB_9_5)
+        DG_9 = int(DG_9_1) + int(DG_9_2) + int(DG_9_3) + int(DG_9_4) + int(DG_9_5)
+        DT_9 = int(DB_9) + int(DG_9)
+
+        EB_10_1 = data['Data'][0]['ClassX_6']
+        EB_10_2 = data['Data'][0]['ClassX_7_3']
+        EB_10_3 = data['Data'][0]['ClassX_7_4']
+        EB_10_4 = data['Data'][0]['ClassX_8']
+        EB_10_5 = data['Data'][0]['ClassX_9']
+        DB_10_1 = data['Data'][7]['ClassX_6']
+        DB_10_2 = data['Data'][7]['ClassX_7_3']
+        DB_10_3 = data['Data'][7]['ClassX_7_4']
+        DB_10_4 = data['Data'][7]['ClassX_8']
+        DB_10_5 = data['Data'][7]['ClassX_9']
+
+        EG_10_1 = data['Data'][1]['ClassX_6']
+        EG_10_2 = data['Data'][1]['ClassX_7_3']
+        EG_10_3 = data['Data'][1]['ClassX_7_4']
+        EG_10_4 = data['Data'][1]['ClassX_8']
+        EG_10_5 = data['Data'][1]['ClassX_9']
+        DG_10_1 = data['Data'][8]['ClassX_6']
+        DG_10_2 = data['Data'][8]['ClassX_7_3']
+        DG_10_3 = data['Data'][8]['ClassX_7_4']
+        DG_10_4 = data['Data'][8]['ClassX_8']
+        DG_10_5 = data['Data'][8]['ClassX_9']
+
+        ET_10_1 = data['Data'][6]['ClassX_6']
+        ET_10_2 = data['Data'][6]['ClassX_7_3']
+        ET_10_3 = data['Data'][6]['ClassX_7_4']
+        ET_10_4 = data['Data'][6]['ClassX_8']
+        ET_10_5 = data['Data'][6]['ClassX_9']
+
+        PB_10_1 = data['Data'][2]['ClassX_6']
+        PB_10_2 = data['Data'][2]['ClassX_7_3']
+        PB_10_3 = data['Data'][2]['ClassX_7_4']
+        PB_10_4 = data['Data'][2]['ClassX_8']
+        PB_10_5 = data['Data'][2]['ClassX_9']
+
+        PG_10_1 = data['Data'][3]['ClassX_6']
+        PG_10_2 = data['Data'][3]['ClassX_7_3']
+        PG_10_3 = data['Data'][3]['ClassX_7_4']
+        PG_10_4 = data['Data'][2]['ClassX_8']
+        PG_10_5 = data['Data'][3]['ClassX_9']
+
+        PT_10_1 = data['Data'][4]['ClassX_6']
+        PT_10_2 = data['Data'][4]['ClassX_7_3']
+        PT_10_3 = data['Data'][4]['ClassX_7_4']
+        PT_10_4 = data['Data'][4]['ClassX_8']
+        PT_10_5 = data['Data'][4]['ClassX_9']
+
+        EB_10 = int(EB_10_1) + int(EB_10_2) + int(EB_10_3) + int(EB_10_4) + int(EB_10_5)
+        EG_10 = int(EG_10_1) + int(EG_10_2) + int(EG_10_3) + int(EG_10_4) + int(EG_10_5)
+        ET_10 = int(ET_10_1) + int(ET_10_2) + int(ET_10_3) + int(ET_10_4) + int(ET_10_5)
+        PB_10 = int(PB_10_1) + int(PB_10_2) + int(PB_10_3) + int(PB_10_4) + int(PB_10_5)
+        PG_10 = int(PG_10_1) + int(PG_10_2) + int(PG_10_3) + int(PG_10_4) + int(PG_10_5)
+        PT_10 = int(PT_10_1) + int(PT_10_2) + int(PT_10_3) + int(PT_10_4) + int(PT_10_5)
+
+        DB_10 = int(DB_10_1) + int(DB_10_2) + int(DB_10_3) + int(DB_10_4) + int(DB_10_5)
+        DG_10 = int(DG_10_1) + int(DG_10_2) + int(DG_10_3) + int(DG_10_4) + int(DG_10_5)
+        DT_10 = int(DB_10) + int(DG_10)
+
+        EB_11_1 = data['Data'][0]['ClassXI_10']
+        EB_11_2 = data['Data'][0]['ClassXI_11_5']
+        EB_11_3 = data['Data'][0]['ClassXI_11_6']
+        EB_11_4 = data['Data'][0]['ClassXI_11_7']
+        EB_11_5 = data['Data'][0]['ClassXI_12']
+        EB_11_6 = data['Data'][0]['ClassXI_13']
+        DB_11_1 = data['Data'][7]['ClassXI_10']
+        DB_11_2 = data['Data'][7]['ClassXI_11_5']
+        DB_11_3 = data['Data'][7]['ClassXI_11_6']
+        DB_11_4 = data['Data'][7]['ClassXI_11_7']
+        DB_11_5 = data['Data'][7]['ClassXI_12']
+        DB_11_6 = data['Data'][7]['ClassXI_13']
+
+        EG_11_1 = data['Data'][1]['ClassXI_10']
+        EG_11_2 = data['Data'][1]['ClassXI_11_5']
+        EG_11_3 = data['Data'][1]['ClassXI_11_6']
+        EG_11_4 = data['Data'][1]['ClassXI_11_7']
+        EG_11_5 = data['Data'][1]['ClassXI_12']
+        EG_11_6 = data['Data'][1]['ClassXI_13']
+        DG_11_1 = data['Data'][8]['ClassXI_10']
+        DG_11_2 = data['Data'][8]['ClassXI_11_5']
+        DG_11_3 = data['Data'][8]['ClassXI_11_6']
+        DG_11_4 = data['Data'][8]['ClassXI_11_7']
+        DG_11_5 = data['Data'][8]['ClassXI_12']
+        DG_11_6 = data['Data'][8]['ClassXI_13']
+
+        ET_11_1 = data['Data'][6]['ClassXI_10']
+        ET_11_2 = data['Data'][6]['ClassXI_11_5']
+        ET_11_3 = data['Data'][6]['ClassXI_11_6']
+        ET_11_4 = data['Data'][6]['ClassXI_11_7']
+        ET_11_5 = data['Data'][6]['ClassXI_12']
+        ET_11_6 = data['Data'][6]['ClassXI_13']
+
+        PB_11_1 = data['Data'][2]['ClassXI_10']
+        PB_11_2 = data['Data'][2]['ClassXI_11_5']
+        PB_11_3 = data['Data'][2]['ClassXI_11_6']
+        PB_11_4 = data['Data'][2]['ClassXI_11_7']
+        PB_11_5 = data['Data'][2]['ClassXI_12']
+        PB_11_6 = data['Data'][2]['ClassXI_13']
+
+        PG_11_1 = data['Data'][3]['ClassXI_10']
+        PG_11_2 = data['Data'][3]['ClassXI_11_5']
+        PG_11_3 = data['Data'][3]['ClassXI_11_6']
+        PG_11_4 = data['Data'][2]['ClassXI_11_7']
+        PG_11_5 = data['Data'][3]['ClassXI_12']
+        PG_11_6 = data['Data'][3]['ClassXI_13']
+
+        PT_11_1 = data['Data'][4]['ClassXI_10']
+        PT_11_2 = data['Data'][4]['ClassXI_11_5']
+        PT_11_3 = data['Data'][4]['ClassXI_11_6']
+        PT_11_4 = data['Data'][4]['ClassXI_11_7']
+        PT_11_5 = data['Data'][4]['ClassXI_12']
+        PT_11_6 = data['Data'][4]['ClassXI_13']
+
+        EB_11 = int(EB_11_1) + int(EB_11_2) + int(EB_11_3) + int(EB_11_4) + int(EB_11_5) + int(EB_11_6)
+        EG_11 = int(EG_11_1) + int(EG_11_2) + int(EG_11_3) + int(EG_11_4) + int(EG_11_5) + int(EG_11_6)
+        ET_11 = int(ET_11_1) + int(ET_11_2) + int(ET_11_3) + int(ET_11_4) + int(ET_11_5) + int(ET_11_6)
+        PB_11 = int(PB_11_1) + int(PB_11_2) + int(PB_11_3) + int(PB_11_4) + int(PB_11_5) + int(PB_11_6)
+        PG_11 = int(PG_11_1) + int(PG_11_2) + int(PG_11_3) + int(PG_11_4) + int(PG_11_5) + int(PG_11_6)
+        PT_11 = int(PT_11_1) + int(PT_11_2) + int(PT_11_3) + int(PT_11_4) + int(PT_11_5) + int(PT_11_6)
+
+        DB_11 = int(DB_11_1) + int(DB_11_2) + int(DB_11_3) + int(DB_11_4) + int(DB_11_5) + int(DB_11_6)
+        DG_11 = int(DG_11_1) + int(DG_11_2) + int(DG_11_3) + int(DG_11_4) + int(DG_11_5) + int(DG_11_6)
+        DT_11 = int(DB_11) + int(DG_11)
+
+        EB_12_1 = data['Data'][0]['ClassXII_14']
+        EB_12_2 = data['Data'][0]['ClassXII_15_8']
+        EB_12_3 = data['Data'][0]['ClassXII_15_9']
+        EB_12_4 = data['Data'][0]['ClassXII_15_10']
+        EB_12_5 = data['Data'][0]['ClassXII_16']
+        EB_12_6 = data['Data'][0]['ClassXII_17']
+        DB_12_1 = data['Data'][7]['ClassXII_14']
+        DB_12_2 = data['Data'][7]['ClassXII_15_8']
+        DB_12_3 = data['Data'][7]['ClassXII_15_9']
+        DB_12_4 = data['Data'][7]['ClassXII_15_10']
+        DB_12_5 = data['Data'][7]['ClassXII_16']
+        DB_12_6 = data['Data'][7]['ClassXII_17']
+
+        EG_12_1 = data['Data'][1]['ClassXII_14']
+        EG_12_2 = data['Data'][1]['ClassXII_15_8']
+        EG_12_3 = data['Data'][1]['ClassXII_15_9']
+        EG_12_4 = data['Data'][1]['ClassXII_15_10']
+        EG_12_5 = data['Data'][1]['ClassXII_16']
+        EG_12_6 = data['Data'][1]['ClassXII_17']
+        DG_12_1 = data['Data'][8]['ClassXII_14']
+        DG_12_2 = data['Data'][8]['ClassXII_15_8']
+        DG_12_3 = data['Data'][8]['ClassXII_15_9']
+        DG_12_4 = data['Data'][8]['ClassXII_15_10']
+        DG_12_5 = data['Data'][8]['ClassXII_16']
+        DG_12_6 = data['Data'][8]['ClassXII_17']
+
+        ET_12_1 = data['Data'][6]['ClassXII_14']
+        ET_12_2 = data['Data'][6]['ClassXII_15_8']
+        ET_12_3 = data['Data'][6]['ClassXII_15_9']
+        ET_12_4 = data['Data'][6]['ClassXII_15_10']
+        ET_12_5 = data['Data'][6]['ClassXII_16']
+        ET_12_6 = data['Data'][6]['ClassXII_17']
+
+        PB_12_1 = data['Data'][2]['ClassXII_14']
+        PB_12_2 = data['Data'][2]['ClassXII_15_8']
+        PB_12_3 = data['Data'][2]['ClassXII_15_9']
+        PB_12_4 = data['Data'][2]['ClassXII_15_10']
+        PB_12_5 = data['Data'][2]['ClassXII_16']
+        PB_12_6 = data['Data'][2]['ClassXII_17']
+
+        PG_12_1 = data['Data'][3]['ClassXII_14']
+        PG_12_2 = data['Data'][3]['ClassXII_15_8']
+        PG_12_3 = data['Data'][3]['ClassXII_15_9']
+        PG_12_4 = data['Data'][2]['ClassXII_15_10']
+        PG_12_5 = data['Data'][3]['ClassXII_16']
+        PG_12_6 = data['Data'][3]['ClassXII_17']
+
+        PT_12_1 = data['Data'][4]['ClassXII_14']
+        PT_12_2 = data['Data'][4]['ClassXII_15_8']
+        PT_12_3 = data['Data'][4]['ClassXII_15_9']
+        PT_12_4 = data['Data'][4]['ClassXII_15_10']
+        PT_12_5 = data['Data'][4]['ClassXII_16']
+        PT_12_6 = data['Data'][4]['ClassXII_17']
+
+        EB_12 = int(EB_12_1) + int(EB_12_2) + int(EB_12_3) + int(EB_12_4) + int(EB_12_5) + int(EB_12_6)
+        EG_12 = int(EG_12_1) + int(EG_12_2) + int(EG_12_3) + int(EG_12_4) + int(EG_12_5) + int(EG_12_6)
+        ET_12 = int(ET_12_1) + int(ET_12_2) + int(ET_12_3) + int(ET_12_4) + int(ET_12_5) + int(ET_12_6)
+        PB_12 = int(PB_12_1) + int(PB_12_2) + int(PB_12_3) + int(PB_12_4) + int(PB_12_5) + int(PB_12_6)
+        PG_12 = int(PG_12_1) + int(PG_12_2) + int(PG_12_3) + int(PG_12_4) + int(PG_12_5) + int(PG_12_6)
+        PT_12 = int(PT_12_1) + int(PT_12_2) + int(PT_12_3) + int(PT_12_4) + int(PT_12_5) + int(PT_12_6)
+
+        DB_12 = int(DB_12_1) + int(DB_12_2) + int(DB_12_3) + int(DB_12_4) + int(DB_12_5) + int(DB_12_6)
+        DG_12 = int(DG_12_1) + int(DG_12_2) + int(DG_12_3) + int(DG_12_4) + int(DG_12_5) + int(DG_12_6)
+        DT_12 = int(DB_12) + int(DG_12)
+
+        EB = int(EB_E) + int(EB_1) + int(EB_2) + int(EB_3) + int(EB_4) + int(EB_5) + int(EB_6) + int(EB_7) + int(
+            EB_8) + int(EB_9) + int(EB_10) + int(EB_11) + int(EB_12)
+        EG = int(EG_E) + int(EG_1) + int(EG_2) + int(EG_3) + int(EG_4) + int(EG_5) + int(EG_6) + int(EG_7) + int(
+            EG_8) + int(EG_9) + int(EG_10) + int(EG_11) + int(EG_12)
+        ET = int(ET_E) + int(ET_1) + int(ET_2) + int(ET_3) + int(ET_4) + int(ET_5) + int(ET_6) + int(ET_7) + int(
+            ET_8) + int(ET_9) + int(ET_10) + int(ET_11) + int(ET_12)
+        PB = int(PB_E) + int(PB_1) + int(PB_2) + int(PB_3) + int(PB_4) + int(PB_5) + int(PB_6) + int(PB_7) + int(
+            PB_8) + int(PB_9) + int(PB_10) + int(PB_11) + int(PB_12)
+        PG = int(PG_E) + int(PG_1) + int(PG_2) + int(PG_3) + int(PG_4) + int(PG_5) + int(PG_6) + int(PG_7) + int(
+            PG_8) + int(PG_9) + int(PG_10) + int(PG_11) + int(PG_12)
+        PT = int(PT_E) + int(PT_1) + int(PT_2) + int(PT_3) + int(PT_4) + int(PT_5) + int(PT_6) + int(PT_7) + int(
+            PT_8) + int(PT_9) + int(PT_10) + int(PT_11) + int(PT_12)
+
+        DB = int(DB_E) + int(DB_1) + int(DB_2) + int(DB_3) + int(DB_4) + int(DB_5) + int(DB_6) + int(DB_7) + int(
+            DB_8) + int(DB_9) + int(DB_10) + int(DB_11) + int(DB_12)
+        DG = int(DG_E) + int(DG_1) + int(DG_2) + int(DG_3) + int(DG_4) + int(DG_5) + int(DG_6) + int(DG_7) + int(
+            DG_8) + int(DG_9) + int(DG_10) + int(DG_11) + int(DG_12)
+        DT = int(DT_E) + int(DT_1) + int(DT_2) + int(DT_3) + int(DT_4) + int(DT_5) + int(DT_6) + int(DT_7) + int(
+            DT_8) + int(DT_9) + int(DT_10) + int(DT_11) + int(DT_12)
+
+        Enl_Drop_Out = {
+            'Visited_By': MA_Name, 'School_District': School_District,
+            'School_Taluka': School_Taluka, 'School_UC': School_UC,
+            'School_Level': School_Level, 'School_Gender': School_Gender, 'School_Status': School_Status,
+            'Visit_Date': Visit_Date, 'School_Id': School_Id, 'School_Semis': School_Semis,
+            'School_Name': School_Name, 'HM_Name': School_HM, 'HM_No': School_HM_No, 'Filter': ET,
+
+            'EB_E': EB_E, 'EG_E': EG_E, 'ET_E': ET_E, 'DB_E': DB_E, 'DG_E': DG_E, 'DT_E': DT_E,
+            'EB_1': EB_1, 'EG_1': EG_1, 'ET_1': ET_1, 'DB_1': DB_1, 'DG_1': DG_1, 'DT_1': DT_1,
+            'EB_2': EB_2, 'EG_2': EG_2, 'ET_2': ET_2, 'DB_2': DB_2, 'DG_2': DG_2, 'DT_2': DT_2,
+            'EB_3': EB_3, 'EG_3': EG_3, 'ET_3': ET_3, 'DB_3': DB_3, 'DG_3': DG_3, 'DT_3': DT_3,
+            'EB_4': EB_4, 'EG_4': EG_4, 'ET_4': ET_4, 'DB_4': DB_4, 'DG_4': DG_4, 'DT_4': DT_4,
+            'EB_5': EB_5, 'EG_5': EG_5, 'ET_5': ET_5, 'DB_5': DB_5, 'DG_5': DG_5, 'DT_5': DT_5,
+            'EB_6': EB_6, 'EG_6': EG_6, 'ET_6': ET_6, 'DB_6': DB_6, 'DG_6': DG_6, 'DT_6': DT_6,
+            'EB_7': EB_7, 'EG_7': EG_7, 'ET_7': ET_7, 'DB_7': DB_7, 'DG_7': DG_7, 'DT_7': DT_7,
+            'EB_8': EB_8, 'EG_8': EG_8, 'ET_8': ET_8, 'DB_8': DB_8, 'DG_8': DG_8, 'DT_8': DT_8,
+            'EB_9': EB_9, 'EG_9': EG_9, 'ET_9': ET_9, 'DB_9': DB_9, 'DG_9': DG_9, 'DT_9': DT_9,
+            'EB_10': EB_10, 'EG_10': EG_10, 'ET_10': ET_10, 'DB_10': DB_10, 'DG_10': DG_10, 'DT_10': DT_10,
+            'EB_11': EB_11, 'EG_11': EG_11, 'ET_11': ET_11, 'DB_11': DB_11, 'DG_11': DG_11, 'DT_11': DT_11,
+            'EB_12': EB_12, 'EG_12': EG_12, 'ET_12': ET_12, 'DB_12': DB_12, 'DG_12': DG_12, 'DT_12': DT_12,
+            'EB': EB, 'EG': EG, 'ET': ET, 'DB': DB, 'DG': DG, 'DT': DT,
+        }
+
+        Enl_Pro_1 = {
+            'Visited_By': MA_Name, 'School_District': School_District,
+            'School_Taluka': School_Taluka, 'School_UC': School_UC,
+            'School_Level': School_Level, 'School_Gender': School_Gender, 'School_Status': School_Status,
+            'Visit_Date': Visit_Date, 'School_Id': School_Id, 'School_Semis': School_Semis,
+            'School_Name': School_Name,
+
+            'EB_E': EB_E, 'EG_E': EG_E, 'ET_E': ET_E, 'PB_E': PB_E, 'PG_E': PG_E, 'PT_E': PT_E,
+            'EB_1': EB_1, 'EG_1': EG_1, 'ET_1': ET_1, 'PB_1': PB_1, 'PG_1': PG_1, 'PT_1': PT_1,
+            'EB_2': EB_2, 'EG_2': EG_2, 'ET_2': ET_2, 'PB_2': PB_2, 'PG_2': PG_2, 'PT_2': PT_2,
+            'EB_3': EB_3, 'EG_3': EG_3, 'ET_3': ET_3, 'PB_3': PB_3, 'PG_3': PG_3, 'PT_3': PT_3,
+            'EB_4': EB_4, 'EG_4': EG_4, 'ET_4': ET_4, 'PB_4': PB_4, 'PG_4': PG_4, 'PT_4': PT_4,
+            'EB_5': EB_5, 'EG_5': EG_5, 'ET_5': ET_5, 'PB_5': PB_5, 'PG_5': PG_5, 'PT_5': PT_5,
+            'EB_6': EB_6, 'EG_6': EG_6, 'ET_6': ET_6, 'PB_6': PB_6, 'PG_6': PG_6, 'PT_6': PT_6,
+            'EB_7': EB_7, 'EG_7': EG_7, 'ET_7': ET_7, 'PB_7': PB_7, 'PG_7': PG_7, 'PT_7': PT_7,
+            'EB_8': EB_8, 'EG_8': EG_8, 'ET_8': ET_8, 'PB_8': PB_8, 'PG_8': PG_8, 'PT_8': PT_8,
+            'EB_9': EB_9, 'EG_9': EG_9, 'ET_9': ET_9, 'PB_9': PB_9, 'PG_9': PG_9, 'PT_9': PT_9,
+            'EB_10': EB_10, 'EG_10': EG_10, 'ET_10': ET_10, 'PB_10': PB_10, 'PG_10': PG_10, 'PT_10': PT_10,
+            'EB_11': EB_11, 'EG_11': EG_11, 'ET_11': ET_11, 'PB_11': PB_11, 'PG_11': PG_11, 'PT_11': PT_11,
+            'EB_12': EB_12, 'EG_12': EG_12, 'ET_12': ET_12, 'PB_12': PB_12, 'PG_12': PG_12, 'PT_12': PT_12,
+            'EB': EB, 'EG': EG, 'ET': ET, 'PB': PB, 'PG': PG, 'PT': PT,
+        }
+
+        Enl_Pro_2 = {
+            'Visited_By': MA_Name, 'School_District': School_District,
+            'School_Taluka': School_Taluka, 'School_UC': School_UC,
+            'School_Level': School_Level, 'School_Gender': School_Gender, 'School_Status': School_Status,
+            'Visit_Date': Visit_Date, 'School_Id': School_Id, 'School_Semis': School_Semis,
+            'School_Name': School_Name,
+
+            'EB_E': EB_E, 'EG_E': EG_E, 'ET_E': ET_E,
+            'EB_1': EB_1, 'EG_1': EG_1, 'ET_1': ET_1,
+            'EB_2': EB_2, 'EG_2': EG_2, 'ET_2': ET_2,
+            'EB_3': EB_3, 'EG_3': EG_3, 'ET_3': ET_3,
+            'EB_4': EB_4, 'EG_4': EG_4, 'ET_4': ET_4,
+            'EB_5': EB_5, 'EG_5': EG_5, 'ET_5': ET_5,
+            'EB_6': EB_6, 'EG_6': EG_6, 'ET_6': ET_6,
+            'EB_7': EB_7, 'EG_7': EG_7, 'ET_7': ET_7,
+            'EB_8': EB_8, 'EG_8': EG_8, 'ET_8': ET_8,
+            'EB_9': EB_9, 'EG_9': EG_9, 'ET_9': ET_9,
+            'EB_10': EB_10, 'EG_10': EG_10, 'ET_10': ET_10,
+            'EB_11': EB_11, 'EG_11': EG_11, 'ET_11': ET_11,
+            'EB_12': EB_12, 'EG_12': EG_12, 'ET_12': ET_12,
+            'EB': EB, 'EG': EG, 'ET': ET,
+
+            'PB_E': PB_E, 'PG_E': PG_E, 'PT_E': PT_E,
+            'PB_1': PB_1, 'PG_1': PG_1, 'PT_1': PT_1,
+            'PB_2': PB_2, 'PG_2': PG_2, 'PT_2': PT_2,
+            'PB_3': PB_3, 'PG_3': PG_3, 'PT_3': PT_3,
+            'PB_4': PB_4, 'PG_4': PG_4, 'PT_4': PT_4,
+            'PB_5': PB_5, 'PG_5': PG_5, 'PT_5': PT_5,
+            'PB_6': PB_6, 'PG_6': PG_6, 'PT_6': PT_6,
+            'PB_7': PB_7, 'PG_7': PG_7, 'PT_7': PT_7,
+            'PB_8': PB_8, 'PG_8': PG_8, 'PT_8': PT_8,
+            'PB_9': PB_9, 'PG_9': PG_9, 'PT_9': PT_9,
+            'PB_10': PB_10, 'PG_10': PG_10, 'PT_10': PT_10,
+            'PB_11': PB_11, 'PG_11': PG_11, 'PT_11': PT_11,
+            'PB_12': PB_12, 'PG_12': PG_12, 'PT_12': PT_12,
+            'PB': PB, 'PG': PG, 'PT': PT,
+        }
+
+        Enl_Ann = {
+            'Visited_By': MA_Name, 'School_District': School_District,
+            'School_Taluka': School_Taluka, 'School_UC': School_UC,
+            'School_Level': School_Level, 'School_Gender': School_Gender, 'School_Status': School_Status,
+            'Visit_Date': Visit_Date, 'School_Id': School_Id, 'School_Semis': School_Semis,
+            'School_Name': School_Name,
+
+            'EB_E': EB_E, 'EG_E': EG_E, 'EB_1': EB_1, 'EG_1': EG_1, 'EB_2': EB_2, 'EG_2': EG_2,
+            'EB_3': EB_3, 'EG_3': EG_3, 'EB_4': EB_4, 'EG_4': EG_4, 'EB_5': EB_5, 'EG_5': EG_5,
+            'EB_6': EB_6, 'EG_6': EG_6, 'EB_7': EB_7, 'EG_7': EG_7, 'EB_8': EB_8, 'EG_8': EG_8,
+            'EB_9': EB_9, 'EG_9': EG_9, 'EB_10': EB_10, 'EG_10': EG_10, 'EB_11': EB_11, 'EG_11': EG_11,
+            'EB_12': EB_12, 'EG_12': EG_12,
+
+            'PB_E': PB_E, 'PG_E': PG_E, 'PB_1': PB_1, 'PG_1': PG_1, 'PB_2': PB_2, 'PG_2': PG_2,
+            'PG_3': PG_3, 'PT_3': PT_3, 'PB_4': PB_4, 'PG_4': PG_4, 'PB_5': PB_5, 'PG_5': PG_5,
+            'PB_6': PB_6, 'PG_6': PG_6, 'PB_7': PB_7, 'PG_7': PG_7, 'PB_8': PB_8, 'PG_8': PG_8,
+            'PB_9': PB_9, 'PG_9': PG_9, 'PB_10': PB_10, 'PG_10': PG_10, 'PB_11': PB_11, 'PG_11': PG_11,
+            'PB_12': PB_12, 'PG_12': PG_12,
+
+            # 'ET_E': ET_E, 'PT_E': PT_E, 'ET_1': ET_1, 'PT_1': PT_1, 'ET_2': ET_2, 'PT_2': PT_2,
+            # 'ET_3': ET_3, 'PB_3': PB_3, 'ET_4': ET_4, 'PT_4': PT_4, 'ET_5': ET_5, 'PT_5': PT_5,
+            # 'ET_6': ET_6, 'PT_6': PT_6, 'ET_7': ET_7, 'PT_7': PT_7, 'ET_8': ET_8, 'PT_8': PT_8,
+            # 'ET_9': ET_9, 'PT_9': PT_9, 'ET_10': ET_10, 'PT_10': PT_10, 'ET_11': ET_11, 'PT_11': PT_11,
+            # 'ET_12': ET_12, 'PT_12': PT_12,
+
+            'EB': EB, 'EG': EG, 'ET': ET, 'PB': PB, 'PG': PG, 'PT': PT
+        }
+
+        school_report = {
+            'Visited_By': MA_Name, 'School_District': School_District,
+            'School_Taluka': School_Taluka, 'School_UC': School_UC,
+            'School_Level': School_Level, 'School_Gender': School_Gender, 'School_Id': School_Id,
+            'School_Semis': School_Semis, 'School_Name': School_Name, 'HM_Name': School_HM, 'HM_NO': School_HM_No,
+            'Visit_Date': Visit_Date, 'School_Status': School_Status, 'ENL': ET, 'staff': staff, 'cadre': cadre,
+            'STR': '',
+
+            # 'EB_E': EB_E, 'EG_E': EG_E, 'EB_1': EB_1, 'EG_1': EG_1, 'EB_2': EB_2, 'EG_2': EG_2,
+            # 'EB_3': EB_3, 'EG_3': EG_3, 'EB_4': EB_4, 'EG_4': EG_4, 'EB_5': EB_5, 'EG_5': EG_5,
+            # 'EB_6': EB_6, 'EG_6': EG_6, 'EB_7': EB_7, 'EG_7': EG_7, 'EB_8': EB_8, 'EG_8': EG_8,
+            # 'EB_9': EB_9, 'EG_9': EG_9, 'EB_10': EB_10, 'EG_10': EG_10, 'EB_11': EB_11, 'EG_11': EG_11,
+            # 'EB_12': EB_12, 'EG_12': EG_12,
+            #
+            # 'PB_E': PB_E, 'PG_E': PG_E, 'PB_1': PB_1, 'PG_1': PG_1, 'PB_2': PB_2, 'PG_2': PG_2,
+            # 'PG_3': PG_3, 'PT_3': PT_3, 'PB_4': PB_4, 'PG_4': PG_4, 'PB_5': PB_5, 'PG_5': PG_5,
+            # 'PB_6': PB_6, 'PG_6': PG_6, 'PB_7': PB_7, 'PG_7': PG_7, 'PB_8': PB_8, 'PG_8': PG_8,
+            # 'PB_9': PB_9, 'PG_9': PG_9, 'PB_10': PB_10, 'PG_10': PG_10, 'PB_11': PB_11, 'PG_11': PG_11,
+            # 'PB_12': PB_12, 'PG_12': PG_12,
+
+            # 'ET_E': ET_E, 'PT_E': PT_E, 'ET_1': ET_1, 'PT_1': PT_1, 'ET_2': ET_2, 'PT_2': PT_2,
+            # 'ET_3': ET_3, 'PB_3': PB_3, 'ET_4': ET_4, 'PT_4': PT_4, 'ET_5': ET_5, 'PT_5': PT_5,
+            # 'ET_6': ET_6, 'PT_6': PT_6, 'ET_7': ET_7, 'PT_7': PT_7, 'ET_8': ET_8, 'PT_8': PT_8,
+            # 'ET_9': ET_9, 'PT_9': PT_9, 'ET_10': ET_10, 'PT_10': PT_10, 'ET_11': ET_11, 'PT_11': PT_11,
+            # 'ET_12': ET_12, 'PT_12': PT_12,
+
+            'EB': EB, 'EG': EG, 'ET': ET, 'PB': PB, 'PG': PG, 'PT': PT
+        }
+
+        just_enl = {
+            'S. No': '',
+            'District': School_District,
+            'School_Name': School_Name,
+            'Semis Code': School_Semis,
+            'Status': '',
+
+            'EB_E': EB_E, 'EG_E': EG_E,
+            'EB_1': EB_1, 'EG_1': EG_1,
+            'EB_2': EB_2, 'EG_2': EG_2,
+            'EB_3': EB_3, 'EG_3': EG_3,
+            'EB_4': EB_4, 'EG_4': EG_4,
+            'EB_5': EB_5, 'EG_5': EG_5,
+            'EB_6': EB_6, 'EG_6': EG_6,
+            'EB_7': EB_7, 'EG_7': EG_7,
+            'EB_8': EB_8, 'EG_8': EG_8,
+            'EB_9': EB_9, 'EG_9': EG_9,
+            'EB_10': EB_10, 'EG_10': EG_10,
+            'EB_11': EB_11, 'EG_11': EG_11,
+            'EB_12': EB_12, 'EG_12': EG_12,
+            'EB': EB, 'EG': EG, 'ET': ET
+        }
+
+        # if ET >= 1:
+        yield just_enl
+
+
+
+for textbooks data we can get:
+from MneDict import *
+
+
+class MneEnlSpider(scrapy.Spider):
+    name = 'TextBook'
+    start_urls = start_url
+    headers = header
+
+    def parse(self, response):
+        id_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetSchoolById/{}'
+        for ids in read_excel():
+            yield scrapy.Request(id_url.format(ids), callback=self.school_info, headers=self.headers)
+
+    def school_info(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        School_Prefix = data['School_Prefix']
+        School_Names = data['School_Name']
+        School_Name = School_Prefix + ' ' + School_Names
+        School_Semis = data['School_SEMIS_Code']
+        School_Gender = data['Gender']
+        School_Level = data['Level']
+        School_UC = data['UC_Name']
+        School_Taluka = data['Tehsil_Name']
+        School_District = data['District_Name']
+
+        old_url = response.url.strip('https://mne.seld.gos.pk/Services/api//Schools/GetSchoolById/')
+        new_url = 'https://mne.seld.gos.pk/Services/api//Schools/GetMSchoollastvisitsById?SchoolId=' + old_url
+        School_Url = 'https://mne.seld.gos.pk/Portal/#/SchoolPerformaEvaluation?school_Id=' + str(old_url)
+        School_Id = str(old_url)
+        yield scrapy.Request(new_url, callback=self.monitoring_id, headers=self.headers,
+                             meta={'School_Url': School_Url, 'School_Id': School_Id,
+                                   'School_Name': School_Name, 'School_Semis': School_Semis,
+                                   'School_Gender': School_Gender, 'School_Level': School_Level,
+                                   'School_UC': School_UC, 'School_Taluka': School_Taluka,
+                                   'School_District': School_District})
+
+    # To scrap School Id, User from Last Visit API
+    def monitoring_id(self, response):
+        Base_Url = 'https://mne.seld.gos.pk/Services/api//Schools/GetMonitoringDetailsByMonitoringId?MonitoringId='
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_District = response.meta.get('School_District')
+        School_Url = response.meta.get('School_Url')
+        School_Id = response.meta.get('School_Id')
+
+        # To scrap School Ids with a for loop, from Last Visit API.
+        for visits in data['Data'][0:6]:
+            MA_Name = visits['User_Name']
+            Visit_Date = visits['Monitoring_Start_Date'][0:10]
+            Monitoring_Id = visits['Monitoring_ID']
+
+            url = Base_Url + str(Monitoring_Id)
+            request = scrapy.Request(url, callback=self.school_census, headers=self.headers,
+                                     meta={'School_Url': School_Url, 'School_Id': School_Id,
+                                           'School_Name': School_Name, 'School_Semis': School_Semis,
+                                           'School_Gender': School_Gender, 'School_Level': School_Level,
+                                           'School_UC': School_UC, 'School_Taluka': School_Taluka,
+                                           'School_District': School_District, 'MA_Name': MA_Name,
+                                           'Visit_Date': Visit_Date, 'Monitoring_Id': Monitoring_Id})
+
+            yield request
+
+    def school_census(self, response):
+        Base_Url = 'https://mne.seld.gos.pk/Services/api//Schools/GetTextbooksByMonitoringId?MonitoringId='
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_District = response.meta.get('School_District')
+        School_Url = response.meta.get('School_Url')
+        School_Id = response.meta.get('School_Id')
+
+        MA_Name = response.meta.get('MA_Name')
+        Visit_Date = response.meta.get('Visit_Date')
+        Monitoring_Id = response.meta.get('Monitoring_Id')
+        census_data = data['Data']
+        if census_data is not None:
+            School_Status = census_data[0]['Input']
+
+            url = Base_Url + str(Monitoring_Id)
+            request = scrapy.Request(url, callback=self.school_enl, headers=self.headers,
+                                     meta={'School_Url': School_Url, 'School_Id': School_Id,
+                                           'School_Name': School_Name, 'School_Semis': School_Semis,
+                                           'School_Gender': School_Gender, 'School_Level': School_Level,
+                                           'School_UC': School_UC, 'School_Taluka': School_Taluka,
+                                           'School_District': School_District, 'MA_Name': MA_Name,
+                                           'Visit_Date': Visit_Date, 'Monitoring_Id': Monitoring_Id,
+                                           'School_Status': School_Status, })
+
+            yield request
+
+    def school_enl(self, response):
+        raw_data = response.body
+        data = json.loads(raw_data)
+
+        # To retrieve meta data from the previous scrapped table/function
+        School_Name = response.meta.get('School_Name')
+        School_Semis = response.meta.get('School_Semis')
+        School_Gender = response.meta.get('School_Gender')
+        School_Level = response.meta.get('School_Level')
+        School_UC = response.meta.get('School_UC')
+        School_Taluka = response.meta.get('School_Taluka')
+        School_District = response.meta.get('School_District')
+        School_Url = response.meta.get('School_Url')
+        School_Id = response.meta.get('School_Id')
+
+        MA_Name = response.meta.get('MA_Name')
+        Visit_Date = response.meta.get('Visit_Date')
+
+        School_Status = response.meta.get('School_Status')
+
+        # To scrap TextBook Data Class Wise
+
+        T_req_E = data['Data'][0]['Katchi']
+        T_rec_E = data['Data'][1]['Katchi']
+        T_dis_E = data['Data'][2]['Katchi']
+        T_std_E = data['Data'][3]['Katchi']
+        T_pls_E = data['Data'][4]['Katchi']
+        T_mns_E = data['Data'][5]['Katchi']
+        T_tim_E = data['Data'][6]['Katchi']
+
+        T_req_1 = data['Data'][0]['ClassI']
+        T_rec_1 = data['Data'][1]['ClassI']
+        T_dis_1 = data['Data'][2]['ClassI']
+        T_std_1 = data['Data'][3]['ClassI']
+        T_pls_1 = data['Data'][4]['ClassI']
+        T_mns_1 = data['Data'][5]['ClassI']
+        T_tim_1 = data['Data'][6]['ClassI']
+
+        T_req_2 = data['Data'][0]['ClassII']
+        T_rec_2 = data['Data'][1]['ClassII']
+        T_dis_2 = data['Data'][2]['ClassII']
+        T_std_2 = data['Data'][3]['ClassII']
+        T_pls_2 = data['Data'][4]['ClassII']
+        T_mns_2 = data['Data'][5]['ClassII']
+        T_tim_2 = data['Data'][6]['ClassII']
+
+        T_req_3 = data['Data'][0]['ClassIII']
+        T_rec_3 = data['Data'][1]['ClassIII']
+        T_dis_3 = data['Data'][2]['ClassIII']
+        T_std_3 = data['Data'][3]['ClassIII']
+        T_pls_3 = data['Data'][4]['ClassIII']
+        T_mns_3 = data['Data'][5]['ClassIII']
+        T_tim_3 = data['Data'][6]['ClassIII']
+
+        T_req_4 = data['Data'][0]['ClassIV']
+        T_rec_4 = data['Data'][1]['ClassIV']
+        T_dis_4 = data['Data'][2]['ClassIV']
+        T_std_4 = data['Data'][3]['ClassIV']
+        T_pls_4 = data['Data'][4]['ClassIV']
+        T_mns_4 = data['Data'][5]['ClassIV']
+        T_tim_4 = data['Data'][6]['ClassIV']
+
+        T_req_5 = data['Data'][0]['ClassV']
+        T_rec_5 = data['Data'][1]['ClassV']
+        T_dis_5 = data['Data'][2]['ClassV']
+        T_std_5 = data['Data'][3]['ClassV']
+        T_pls_5 = data['Data'][4]['ClassV']
+        T_mns_5 = data['Data'][5]['ClassV']
+        T_tim_5 = data['Data'][6]['ClassV']
+
+        T_req_6 = data['Data'][0]['ClassVI']
+        T_rec_6 = data['Data'][1]['ClassVI']
+        T_dis_6 = data['Data'][2]['ClassVI']
+        T_std_6 = data['Data'][3]['ClassVI']
+        T_pls_6 = data['Data'][4]['ClassVI']
+        T_mns_6 = data['Data'][5]['ClassVI']
+        T_tim_6 = data['Data'][6]['ClassVI']
+
+        T_req_7 = data['Data'][0]['ClassVII']
+        T_rec_7 = data['Data'][1]['ClassVII']
+        T_dis_7 = data['Data'][2]['ClassVII']
+        T_std_7 = data['Data'][3]['ClassVII']
+        T_pls_7 = data['Data'][4]['ClassVII']
+        T_mns_7 = data['Data'][5]['ClassVII']
+        T_tim_7 = data['Data'][6]['ClassVII']
+
+        T_req_8 = data['Data'][0]['ClassVIII']
+        T_rec_8 = data['Data'][1]['ClassVIII']
+        T_dis_8 = data['Data'][2]['ClassVIII']
+        T_std_8 = data['Data'][3]['ClassVIII']
+        T_pls_8 = data['Data'][4]['ClassVIII']
+        T_mns_8 = data['Data'][5]['ClassVIII']
+        T_tim_8 = data['Data'][6]['ClassVIII']
+
+        T_req_9_1 = data['Data'][0]['ClassIX_1']
+        T_rec_9_1 = data['Data'][1]['ClassIX_1']
+        T_dis_9_1 = data['Data'][2]['ClassIX_1']
+        T_std_9_1 = data['Data'][3]['ClassIX_1']
+        T_pls_9_1 = data['Data'][4]['ClassIX_1']
+        T_mns_9_1 = data['Data'][5]['ClassIX_1']
+
+        T_req_9_2 = data['Data'][0]['ClassIX_2_1']
+        T_rec_9_2 = data['Data'][1]['ClassIX_2_1']
+        T_dis_9_2 = data['Data'][2]['ClassIX_2_1']
+        T_std_9_2 = data['Data'][3]['ClassIX_2_1']
+        T_pls_9_2 = data['Data'][4]['ClassIX_2_1']
+        T_mns_9_2 = data['Data'][5]['ClassIX_2_1']
+
+        T_req_9_3 = data['Data'][0]['ClassIX_2_2']
+        T_rec_9_3 = data['Data'][1]['ClassIX_2_2']
+        T_dis_9_3 = data['Data'][2]['ClassIX_2_2']
+        T_std_9_3 = data['Data'][3]['ClassIX_2_2']
+        T_pls_9_3 = data['Data'][4]['ClassIX_2_2']
+        T_mns_9_3 = data['Data'][5]['ClassIX_2_2']
+
+        T_req_9_4 = data['Data'][0]['ClassIX_3']
+        T_rec_9_4 = data['Data'][1]['ClassIX_3']
+        T_dis_9_4 = data['Data'][2]['ClassIX_3']
+        T_std_9_4 = data['Data'][3]['ClassIX_3']
+        T_pls_9_4 = data['Data'][4]['ClassIX_3']
+        T_mns_9_4 = data['Data'][5]['ClassIX_3']
+
+        T_req_9_5 = data['Data'][0]['ClassIX_4']
+        T_rec_9_5 = data['Data'][1]['ClassIX_4']
+        T_dis_9_5 = data['Data'][2]['ClassIX_4']
+        T_std_9_5 = data['Data'][3]['ClassIX_4']
+        T_pls_9_5 = data['Data'][4]['ClassIX_4']
+        T_mns_9_5 = data['Data'][5]['ClassIX_4']
+
+        T_req_9 = (int(T_req_9_1) + int(T_req_9_2) + int(T_req_9_3) + int(T_req_9_4) + int(T_req_9_5)) / 3
+        T_rec_9 = (int(T_rec_9_1) + int(T_rec_9_2) + int(T_rec_9_3) + int(T_rec_9_4) + int(T_rec_9_5)) / 3
+        T_dis_9 = (int(T_dis_9_1) + int(T_dis_9_2) + int(T_dis_9_3) + int(T_dis_9_4) + int(T_dis_9_5)) / 3
+        T_std_9 = (int(T_std_9_1) + int(T_std_9_2) + int(T_std_9_3) + int(T_std_9_4) + int(T_std_9_5)) / 3
+        T_pls_9 = (int(T_pls_9_1) + int(T_pls_9_2) + int(T_pls_9_3) + int(T_pls_9_4) + int(T_pls_9_5)) / 3
+        T_mns_9 = (int(T_mns_9_1) + int(T_mns_9_2) + int(T_mns_9_3) + int(T_mns_9_4) + int(T_mns_9_5)) / 3
+
+        T_req_10_1 = data['Data'][0]['ClassX_1']
+        T_rec_10_1 = data['Data'][1]['ClassX_1']
+        T_dis_10_1 = data['Data'][2]['ClassX_1']
+        T_std_10_1 = data['Data'][3]['ClassX_1']
+        T_pls_10_1 = data['Data'][4]['ClassX_1']
+        T_mns_10_1 = data['Data'][5]['ClassX_1']
+
+        T_req_10_2 = data['Data'][0]['ClassX_2_1']
+        T_rec_10_2 = data['Data'][1]['ClassX_2_1']
+        T_dis_10_2 = data['Data'][2]['ClassX_2_1']
+        T_std_10_2 = data['Data'][3]['ClassX_2_1']
+        T_pls_10_2 = data['Data'][4]['ClassX_2_1']
+        T_mns_10_2 = data['Data'][5]['ClassX_2_1']
+
+        T_req_10_3 = data['Data'][0]['ClassX_2_2']
+        T_rec_10_3 = data['Data'][1]['ClassX_2_2']
+        T_dis_10_3 = data['Data'][2]['ClassX_2_2']
+        T_std_10_3 = data['Data'][3]['ClassX_2_2']
+        T_pls_10_3 = data['Data'][4]['ClassX_2_2']
+        T_mns_10_3 = data['Data'][5]['ClassX_2_2']
+
+        T_req_10_4 = data['Data'][0]['ClassX_3']
+        T_rec_10_4 = data['Data'][1]['ClassX_3']
+        T_dis_10_4 = data['Data'][2]['ClassX_3']
+        T_std_10_4 = data['Data'][3]['ClassX_3']
+        T_pls_10_4 = data['Data'][4]['ClassX_3']
+        T_mns_10_4 = data['Data'][5]['ClassX_3']
+
+        T_req_10_5 = data['Data'][0]['ClassX_4']
+        T_rec_10_5 = data['Data'][1]['ClassX_4']
+        T_dis_10_5 = data['Data'][2]['ClassX_4']
+        T_std_10_5 = data['Data'][3]['ClassX_4']
+        T_pls_10_5 = data['Data'][4]['ClassX_4']
+        T_mns_10_5 = data['Data'][5]['ClassX_4']
+
+        T_req_10 = (int(T_req_10_1) + int(T_req_10_2) + int(T_req_10_3) + int(T_req_10_4) + int(T_req_10_5)) / 3
+        T_rec_10 = (int(T_rec_10_1) + int(T_rec_10_2) + int(T_rec_10_3) + int(T_rec_10_4) + int(T_rec_10_5)) / 3
+        T_dis_10 = (int(T_dis_10_1) + int(T_dis_10_2) + int(T_dis_10_3) + int(T_dis_10_4) + int(T_dis_10_5)) / 3
+        T_std_10 = (int(T_std_10_1) + int(T_std_10_2) + int(T_std_10_3) + int(T_std_10_4) + int(T_std_10_5)) / 3
+        T_pls_10 = (int(T_pls_10_1) + int(T_pls_10_2) + int(T_pls_10_3) + int(T_pls_10_4) + int(T_pls_10_5)) / 3
+        T_mns_10 = (int(T_mns_10_1) + int(T_mns_10_2) + int(T_mns_10_3) + int(T_mns_10_4) + int(T_mns_10_5)) / 3
+
+        T_req_11_1 = data['Data'][0]['ClassXI_1']
+        T_rec_11_1 = data['Data'][1]['ClassXI_1']
+        T_dis_11_1 = data['Data'][2]['ClassXI_1']
+        T_std_11_1 = data['Data'][3]['ClassXI_1']
+        T_pls_11_1 = data['Data'][4]['ClassXI_1']
+        T_mns_11_1 = data['Data'][5]['ClassXI_1']
+
+        T_req_11_2 = data['Data'][0]['ClassXI_2_1']
+        T_rec_11_2 = data['Data'][1]['ClassXI_2_1']
+        T_dis_11_2 = data['Data'][2]['ClassXI_2_1']
+        T_std_11_2 = data['Data'][3]['ClassXI_2_1']
+        T_pls_11_2 = data['Data'][4]['ClassXI_2_1']
+        T_mns_11_2 = data['Data'][5]['ClassXI_2_1']
+
+        T_req_11_3 = data['Data'][0]['ClassXI_2_2']
+        T_rec_11_3 = data['Data'][1]['ClassXI_2_2']
+        T_dis_11_3 = data['Data'][2]['ClassXI_2_2']
+        T_std_11_3 = data['Data'][3]['ClassXI_2_2']
+        T_pls_11_3 = data['Data'][4]['ClassXI_2_2']
+        T_mns_11_3 = data['Data'][5]['ClassXI_2_2']
+
+        T_req_11_4 = data['Data'][0]['ClassXI_2_3']
+        T_rec_11_4 = data['Data'][1]['ClassXI_2_3']
+        T_dis_11_4 = data['Data'][2]['ClassXI_2_3']
+        T_std_11_4 = data['Data'][3]['ClassXI_2_3']
+        T_pls_11_4 = data['Data'][4]['ClassXI_2_3']
+        T_mns_11_4 = data['Data'][5]['ClassXI_2_3']
+
+        T_req_11_5 = data['Data'][0]['ClassXI_3']
+        T_rec_11_5 = data['Data'][1]['ClassXI_3']
+        T_dis_11_5 = data['Data'][2]['ClassXI_3']
+        T_std_11_5 = data['Data'][3]['ClassXI_3']
+        T_pls_11_5 = data['Data'][4]['ClassXI_3']
+        T_mns_11_5 = data['Data'][5]['ClassXI_3']
+
+        T_req_11_6 = data['Data'][0]['ClassXI_4']
+        T_rec_11_6 = data['Data'][1]['ClassXI_4']
+        T_dis_11_6 = data['Data'][2]['ClassXI_4']
+        T_std_11_6 = data['Data'][3]['ClassXI_4']
+        T_pls_11_6 = data['Data'][4]['ClassXI_4']
+        T_mns_11_6 = data['Data'][5]['ClassXI_4']
+
+        T_req_11 = (int(T_req_11_1) + int(T_req_11_2) + int(T_req_11_3) + int(T_req_11_4) + int(T_req_11_5) + int(
+            T_req_11_6)) / 3
+        T_rec_11 = (int(T_rec_11_1) + int(T_rec_11_2) + int(T_rec_11_3) + int(T_rec_11_4) + int(T_rec_11_5) + int(
+            T_rec_11_6)) / 3
+        T_dis_11 = (int(T_dis_11_1) + int(T_dis_11_2) + int(T_dis_11_3) + int(T_dis_11_4) + int(T_dis_11_5) + int(
+            T_dis_11_6)) / 3
+        T_std_11 = (int(T_std_11_1) + int(T_std_11_2) + int(T_std_11_3) + int(T_std_11_4) + int(T_std_11_5) + int(
+            T_std_11_6)) / 3
+        T_pls_11 = (int(T_pls_11_1) + int(T_pls_11_2) + int(T_pls_11_3) + int(T_pls_11_4) + int(T_pls_11_5) + int(
+            T_pls_11_6)) / 3
+        T_mns_11 = (int(T_mns_11_1) + int(T_mns_11_2) + int(T_mns_11_3) + int(T_mns_11_4) + int(T_mns_11_5) + int(
+            T_mns_11_6)) / 3
+
+        T_req_12_1 = data['Data'][0]['ClassXII_1']
+        T_rec_12_1 = data['Data'][1]['ClassXII_1']
+        T_dis_12_1 = data['Data'][2]['ClassXII_1']
+        T_std_12_1 = data['Data'][3]['ClassXII_1']
+        T_pls_12_1 = data['Data'][4]['ClassXII_1']
+        T_mns_12_1 = data['Data'][5]['ClassXII_1']
+
+        T_req_12_2 = data['Data'][0]['ClassXII_2_1']
+        T_rec_12_2 = data['Data'][1]['ClassXII_2_1']
+        T_dis_12_2 = data['Data'][2]['ClassXII_2_1']
+        T_std_12_2 = data['Data'][3]['ClassXII_2_1']
+        T_pls_12_2 = data['Data'][4]['ClassXII_2_1']
+        T_mns_12_2 = data['Data'][5]['ClassXII_2_1']
+
+        T_req_12_3 = data['Data'][0]['ClassXII_2_2']
+        T_rec_12_3 = data['Data'][1]['ClassXII_2_2']
+        T_dis_12_3 = data['Data'][2]['ClassXII_2_2']
+        T_std_12_3 = data['Data'][3]['ClassXII_2_2']
+        T_pls_12_3 = data['Data'][4]['ClassXII_2_2']
+        T_mns_12_3 = data['Data'][5]['ClassXII_2_2']
+
+        T_req_12_4 = data['Data'][0]['ClassXII_2_3']
+        T_rec_12_4 = data['Data'][1]['ClassXII_2_3']
+        T_dis_12_4 = data['Data'][2]['ClassXII_2_3']
+        T_std_12_4 = data['Data'][3]['ClassXII_2_3']
+        T_pls_12_4 = data['Data'][4]['ClassXII_2_3']
+        T_mns_12_4 = data['Data'][5]['ClassXII_2_3']
+
+        T_req_12_5 = data['Data'][0]['ClassXII_3']
+        T_rec_12_5 = data['Data'][1]['ClassXII_3']
+        T_dis_12_5 = data['Data'][2]['ClassXII_3']
+        T_std_12_5 = data['Data'][3]['ClassXII_3']
+        T_pls_12_5 = data['Data'][4]['ClassXII_3']
+        T_mns_12_5 = data['Data'][5]['ClassXII_3']
+
+        T_req_12_6 = data['Data'][0]['ClassXII_4']
+        T_rec_12_6 = data['Data'][1]['ClassXII_4']
+        T_dis_12_6 = data['Data'][2]['ClassXII_4']
+        T_std_12_6 = data['Data'][3]['ClassXII_4']
+        T_pls_12_6 = data['Data'][4]['ClassXII_4']
+        T_mns_12_6 = data['Data'][5]['ClassXII_4']
+
+        T_req_12 = (int(T_req_12_1) + int(T_req_12_2) + int(T_req_12_3) + int(T_req_12_4) + int(T_req_12_5) + int(
+            T_req_12_6)) / 3
+        T_rec_12 = (int(T_rec_12_1) + int(T_rec_12_2) + int(T_rec_12_3) + int(T_rec_12_4) + int(T_rec_12_5) + int(
+            T_rec_12_6)) / 3
+        T_dis_12 = (int(T_dis_12_1) + int(T_dis_12_2) + int(T_dis_12_3) + int(T_dis_12_4) + int(T_dis_12_5) + int(
+            T_dis_12_6)) / 3
+        T_std_12 = (int(T_std_12_1) + int(T_std_12_2) + int(T_std_12_3) + int(T_std_12_4) + int(T_std_12_5) + int(
+            T_std_12_6)) / 3
+        T_pls_12 = (int(T_pls_12_1) + int(T_pls_12_2) + int(T_pls_12_3) + int(T_pls_12_4) + int(T_pls_12_5) + int(
+            T_pls_12_6)) / 3
+        T_mns_12 = (int(T_mns_12_1) + int(T_mns_12_2) + int(T_mns_12_3) + int(T_mns_12_4) + int(T_mns_12_5) + int(
+            T_mns_12_6)) / 3
+
+        T_req = int(T_req_E) + int(T_req_1) + int(T_req_2) + int(T_req_3) + int(T_req_4) + int(T_req_5) + int(
+            T_req_6) + int(T_req_7) + int(T_req_8) + int(T_req_9) + int(T_req_10) + int(T_req_11) + int(T_req_12)
+        T_rec = int(T_rec_E) + int(T_rec_1) + int(T_rec_2) + int(T_rec_3) + int(T_rec_4) + int(T_rec_5) + int(
+            T_rec_6) + int(T_rec_7) + int(T_rec_8) + int(T_rec_9) + int(T_rec_10) + int(T_rec_11) + int(T_rec_12)
+        T_dis = int(T_dis_E) + int(T_dis_1) + int(T_dis_2) + int(T_dis_3) + int(T_dis_4) + int(T_dis_5) + int(
+            T_dis_6) + int(T_dis_7) + int(T_dis_8) + int(T_dis_9) + int(T_dis_10) + int(T_dis_11) + int(T_dis_12)
+        T_std = int(T_std_E) + int(T_std_1) + int(T_std_2) + int(T_std_3) + int(T_std_4) + int(T_std_5) + int(
+            T_std_6) + int(T_std_7) + int(T_std_8) + int(T_std_9) + int(T_std_10) + int(T_std_11) + int(T_std_12)
+        T_pls = int(T_pls_E) + int(T_pls_1) + int(T_pls_2) + int(T_pls_3) + int(T_pls_4) + int(T_pls_5) + int(
+            T_pls_6) + int(T_pls_7) + int(T_pls_8) + int(T_pls_9) + int(T_pls_10) + int(T_pls_11) + int(T_pls_12)
+        T_mns = int(T_mns_E) + int(T_mns_1) + int(T_mns_2) + int(T_mns_3) + int(T_mns_4) + int(T_mns_5) + int(
+            T_mns_6) + int(T_mns_7) + int(T_mns_8) + int(T_mns_9) + int(T_mns_10) + int(T_mns_11) + int(T_mns_12)
+
+        Txt_data_report = {
+            'Visited_By': MA_Name, 'School_District': School_District,
+            'School_Taluka': School_Taluka, 'School_UC': School_UC,
+            'School_Level': School_Level, 'School_Gender': School_Gender, 'School_Status': School_Status,
+            'Visit_Date': Visit_Date, 'School_Id': School_Id, 'School_Semis': School_Semis,
+            'School_Name': School_Name,
+
+            'T_req_E': T_req_E, 'T_rec_E': T_rec_E, 'T_dis_E': T_dis_E, 'T_std_E': T_std_E,
+            'T_req_1': T_req_1, 'T_rec_1': T_rec_1, 'T_dis_1': T_dis_1, 'T_std_1': T_std_1,
+            'T_req_2': T_req_2, 'T_rec_2': T_rec_2, 'T_dis_2': T_dis_2, 'T_std_2': T_std_2,
+            'T_req_3': T_req_3, 'T_rec_3': T_rec_3, 'T_dis_3': T_dis_3, 'T_std_3': T_std_3,
+            'T_req_4': T_req_4, 'T_rec_4': T_rec_4, 'T_dis_4': T_dis_4, 'T_std_4': T_std_4,
+            'T_req_5': T_req_5, 'T_rec_5': T_rec_5, 'T_dis_5': T_dis_5, 'T_std_5': T_std_5,
+            'T_req_6': T_req_6, 'T_rec_6': T_rec_6, 'T_dis_6': T_dis_6, 'T_std_6': T_std_6,
+            'T_req_7': T_req_7, 'T_rec_7': T_rec_7, 'T_dis_7': T_dis_7, 'T_std_7': T_std_7,
+            'T_req_8': T_req_8, 'T_rec_8': T_rec_8, 'T_dis_8': T_dis_8, 'T_std_8': T_std_8,
+            'T_req_9': T_req_9, 'T_rec_9': T_rec_9, 'T_dis_9': T_dis_9, 'T_std_9': T_std_9,
+            'T_req_10': T_req_10, 'T_rec_10': T_rec_10, 'T_dis_10': T_dis_10, 'T_std_10': T_std_10,
+            'T_req_11': T_req_11, 'T_rec_11': T_rec_11, 'T_dis_11': T_dis_11, 'T_std_11': T_std_11,
+            'T_req_12': T_req_12, 'T_rec_12': T_rec_12, 'T_dis_12': T_dis_12, 'T_std_12': T_std_12,
+            'T_req': T_req, 'T_rec': T_rec, 'T_dis': T_dis, 'T_std': T_std,
+
+        }
+
+        Txt_all = {
+            'Visited_By': MA_Name, 'School_District': School_District,
+            'School_Taluka': School_Taluka, 'School_UC': School_UC,
+            'School_Level': School_Level, 'School_Gender': School_Gender, 'School_Status': School_Status,
+            'Visit_Date': Visit_Date, 'School_Id': School_Id, 'School_Semis': School_Semis,
+            'School_Name': School_Name,
+
+            'T_req_E': T_req_E, 'T_rec_E': T_rec_E, 'T_dis_E': T_dis_E, 'T_std_E': T_std_E, 'T_pls_E': T_pls_E,
+            'T_mns_E': T_mns_E,
+            'T_req_1': T_req_1, 'T_rec_1': T_rec_1, 'T_dis_1': T_dis_1, 'T_std_1': T_std_1, 'T_pls_1': T_pls_1,
+            'T_mns_1': T_mns_1,
+            'T_req_2': T_req_2, 'T_rec_2': T_rec_2, 'T_dis_2': T_dis_2, 'T_std_2': T_std_2, 'T_pls_2': T_pls_2,
+            'T_mns_2': T_mns_2,
+            'T_req_3': T_req_3, 'T_rec_3': T_rec_3, 'T_dis_3': T_dis_3, 'T_std_3': T_std_3, 'T_pls_3': T_pls_3,
+            'T_mns_3': T_mns_3,
+            'T_req_4': T_req_4, 'T_rec_4': T_rec_4, 'T_dis_4': T_dis_4, 'T_std_4': T_std_4, 'T_pls_4': T_pls_4,
+            'T_mns_4': T_mns_4,
+            'T_req_5': T_req_5, 'T_rec_5': T_rec_5, 'T_dis_5': T_dis_5, 'T_std_5': T_std_5, 'T_pls_5': T_pls_5,
+            'T_mns_5': T_mns_5,
+            'T_req_6': T_req_6, 'T_rec_6': T_rec_6, 'T_dis_6': T_dis_6, 'T_std_6': T_std_6, 'T_pls_6': T_pls_6,
+            'T_mns_6': T_mns_6,
+            'T_req_7': T_req_7, 'T_rec_7': T_rec_7, 'T_dis_7': T_dis_7, 'T_std_7': T_std_7, 'T_pls_7': T_pls_7,
+            'T_mns_7': T_mns_7,
+            'T_req_8': T_req_8, 'T_rec_8': T_rec_8, 'T_dis_8': T_dis_8, 'T_std_8': T_std_8, 'T_pls_8': T_pls_8,
+            'T_mns_8': T_mns_8,
+            'T_req_9': T_req_9, 'T_rec_9': T_rec_9, 'T_dis_9': T_dis_9, 'T_std_9': T_std_9, 'T_pls_9': T_pls_9,
+            'T_mns_9': T_mns_9,
+            'T_req_10': T_req_10, 'T_rec_10': T_rec_10, 'T_dis_10': T_dis_10, 'T_std_10': T_std_10,
+            'T_pls_10': T_pls_10, 'T_mns_10': T_mns_10,
+            'T_req_11': T_req_11, 'T_rec_11': T_rec_11, 'T_dis_11': T_dis_11, 'T_std_11': T_std_11,
+            'T_pls_11': T_pls_11, 'T_mns_11': T_mns_11,
+            'T_req_12': T_req_12, 'T_rec_12': T_rec_12, 'T_dis_12': T_dis_12, 'T_std_12': T_std_12,
+            'T_pls_12': T_pls_12, 'T_mns_12': T_mns_12,
+            'T_req': T_req, 'T_rec': T_rec, 'T_dis': T_dis, 'T_std': T_std, 'T_pls': T_pls, 'T_mns': T_mns
+        }
+
+        # yield Txt_All
+
+        yield Txt_data_report
+
+
+
+The above scripts are fetching attandance, Census, Enrollment and TextBooks from API: I want the same data in my application so get the live data from API and set in version3 and share the zip
