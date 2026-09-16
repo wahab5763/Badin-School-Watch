@@ -415,7 +415,7 @@ export async function fetchAssignedSchoolsForDate(selectedDate, filters = {}) {
 
   for (const { userId, userName } of users) {
     const endpoint = resolveEndpointUrl(endpointTemplate, { year, userId });
-    const url = `${base}/${endpoint}`.replace(/\/\/+/g, '/');
+    const url = `${base}/${endpoint}`;
 
     try {
       const response = await getJsonWithRetry(url, headers);
