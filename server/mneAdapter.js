@@ -545,22 +545,27 @@ export async function buildLiveDashboard(rows, academicYear, academicYearMonths,
       let visitEvidence = { items: [], byCategory: { school: [], musterRoll: [], washroom: [], visit: [], other: [] } };
       let monitor = { name: 'Unknown monitor', id: 'N/A' };
 
-      try {
-        schoolInfo = await fetchJson(`${base}//Schools/GetSchoolById/${row.schoolId}`, { headers });
-      } catch (error) {
+      const [schoolInfoResult, visitsResult] = await Promise.allSettled([
+        fetchJson(`${base}//Schools/GetSchoolById/${row.schoolId}`, { headers }),
+        fetchJson(`${base}//Schools/GetMSchoollastvisitsById?SchoolId=${row.schoolId}`, { headers })
+      ]);
+
+      if (schoolInfoResult.status === 'fulfilled') {
+        schoolInfo = schoolInfoResult.value;
+      } else {
         rowFailed = true;
-        if (sampleErrors.length < 3) sampleErrors.push(error?.message || 'School info fetch failed');
+        if (sampleErrors.length < 3) sampleErrors.push(schoolInfoResult.reason?.message || 'School info fetch failed');
       }
 
-      try {
-        const visitsResponse = await fetchJson(`${base}//Schools/GetMSchoollastvisitsById?SchoolId=${row.schoolId}`, { headers });
+      if (visitsResult.status === 'fulfilled') {
+        const visitsResponse = visitsResult.value;
         allVisits = sortedVisits(visitsResponse?.Data || []);
         visits = academicVisits(allVisits, academicYear);
         allVisitDates = allVisits.map((visit) => visit.Monitoring_Start_Date).filter(Boolean);
         latestVisit = allVisits[0] || null;
-      } catch (error) {
+      } else {
         rowFailed = true;
-        if (sampleErrors.length < 3) sampleErrors.push(error?.message || 'Visits fetch failed');
+        if (sampleErrors.length < 3) sampleErrors.push(visitsResult.reason?.message || 'Visits fetch failed');
       }
 
       if (latestVisit?.Monitoring_ID) {
