@@ -1,0 +1,13 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/[...path].js": {
+      "includeFiles": [
+        "school_data.csv",
+        "public/MA_userIds.csv"
+      ],
+      "maxDuration": 60
+    }
+  }
+}
