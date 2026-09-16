@@ -3,10 +3,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/[...path].js": {
-      "includeFiles": [
-        "school_data.csv",
-        "public/MA_userIds.csv"
-      ],
+      "includeFiles": "**/*.csv",
       "maxDuration": 60
     }
   }
