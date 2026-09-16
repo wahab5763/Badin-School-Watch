@@ -92,7 +92,7 @@ export async function fetchSchoolVisitDetail(schoolId, selectedDate, daysRange =
 
 export function buildVisitedSchoolsReportUrl(filters = {}) {
   const params = new URLSearchParams();
-  const keys = ['taluka', 'level', 'gender', 'status', 'selectedDate', 'daysRange', 'minRisk'];
+  const keys = ['taluka', 'level', 'gender', 'status', 'selectedDate', 'daysRange', 'startMonth', 'endMonth', 'minRisk'];
 
   keys.forEach((key) => {
     if (filters[key] === undefined || filters[key] === null || filters[key] === '') return;
@@ -105,7 +105,7 @@ export function buildVisitedSchoolsReportUrl(filters = {}) {
 
 export function buildMonitorAssignmentsReportUrl(filters = {}) {
   const params = new URLSearchParams();
-  const keys = ['taluka', 'level', 'gender', 'status', 'selectedDate', 'daysRange', 'minRisk'];
+  const keys = ['taluka', 'level', 'gender', 'status', 'selectedDate', 'daysRange', 'startMonth', 'endMonth', 'minRisk'];
 
   keys.forEach((key) => {
     if (filters[key] === undefined || filters[key] === null || filters[key] === '') return;
@@ -114,4 +114,19 @@ export function buildMonitorAssignmentsReportUrl(filters = {}) {
 
   const query = params.toString();
   return query ? `/api/reports/monitor-assignments.pdf?${query}` : '/api/reports/monitor-assignments.pdf';
+}
+
+export function buildEmployeeAttendanceReportUrl(filters = {}) {
+  const params = new URLSearchParams();
+  const hasMonthRange = filters.startMonth || filters.endMonth;
+
+  if (hasMonthRange) {
+    if (filters.startMonth) params.set('startMonth', String(filters.startMonth));
+    if (filters.endMonth) params.set('endMonth', String(filters.endMonth));
+  } else if (filters.selectedDate) {
+    params.set('selectedDate', String(filters.selectedDate));
+  }
+
+  const query = params.toString();
+  return query ? `/api/reports/employee-attendance.xlsx?${query}` : '/api/reports/employee-attendance.xlsx';
 }

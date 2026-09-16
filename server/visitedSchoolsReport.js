@@ -35,6 +35,43 @@ function dateOnlyIso(value) {
   return String(value || '').slice(0, 10);
 }
 
+function monthOnlyIso(value) {
+  const iso = dateOnlyIso(value);
+  return iso ? iso.slice(0, 7) : '';
+}
+
+function normalizeMonthRange(startMonth, endMonth) {
+  const normalizedStart = String(startMonth || '').trim();
+  const normalizedEnd = String(endMonth || '').trim();
+
+  if (!normalizedStart && !normalizedEnd) {
+    return { startMonth: '', endMonth: '' };
+  }
+
+  if (!normalizedStart) {
+    return { startMonth: normalizedEnd, endMonth: normalizedEnd };
+  }
+
+  if (!normalizedEnd) {
+    return { startMonth: normalizedStart, endMonth: normalizedStart };
+  }
+
+  return normalizedStart <= normalizedEnd
+    ? { startMonth: normalizedStart, endMonth: normalizedEnd }
+    : { startMonth: normalizedEnd, endMonth: normalizedStart };
+}
+
+function visitInMonthRange(visitDateValue, startMonth, endMonth) {
+  if (!visitDateValue) return false;
+  const visitMonth = monthOnlyIso(visitDateValue);
+  if (!visitMonth) return false;
+
+  const range = normalizeMonthRange(startMonth, endMonth);
+  if (!range.startMonth) return false;
+
+  return visitMonth >= range.startMonth && visitMonth <= range.endMonth;
+}
+
 function visitInRange(visitDateValue, selectedDate, daysRange = 0) {
   if (!visitDateValue || !selectedDate) return false;
 
@@ -120,6 +157,8 @@ export function parseVisitedSchoolsReportFilters(query = {}) {
     gender: normalizeFilterValue(query.gender),
     status: normalizeFilterValue(query.status),
     selectedDate: normalizeFilterValue(query.selectedDate, formatDateInput(new Date())),
+    startMonth: normalizeFilterValue(query.startMonth, ''),
+    endMonth: normalizeFilterValue(query.endMonth, ''),
     daysRange: Math.max(0, parseNumber(query.daysRange, 0)),
     minRisk: Math.max(0, parseNumber(query.minRisk, 0))
   };
@@ -138,9 +177,11 @@ export function buildVisitedSchoolsReportData(payload, filters) {
 
   const visitedSchools = filteredSchools
     .map((school) => {
-      const matchingVisits = schoolVisitDates(school).filter((visitDate) => (
-        visitInRange(visitDate, filters.selectedDate, filters.daysRange)
-      ));
+      const rangeFilter = filters.startMonth || filters.endMonth
+        ? (visitDate) => visitInMonthRange(visitDate, filters.startMonth, filters.endMonth)
+        : (visitDate) => visitInRange(visitDate, filters.selectedDate, filters.daysRange);
+
+      const matchingVisits = schoolVisitDates(school).filter(rangeFilter);
 
       return {
         school,
@@ -218,7 +259,10 @@ export function buildVisitedSchoolsReportPdf(payload, filters) {
     textLine(doc, 'Schools visited in selected period', { fontSize: 12, gapAfter: 10, color: '#334155' });
 
     textLine(doc, `Generated: ${formatDateTime(report.generatedAt)}`, { fontSize: 9, gapAfter: 2, color: '#475569' });
-    textLine(doc, `Period: ${report.filters.selectedDate}${Number(report.filters.daysRange) > 0 ? ` (±${report.filters.daysRange} days)` : ''}`, { fontSize: 9, gapAfter: 2, color: '#475569' });
+    textLine(doc, report.filters.startMonth
+      ? `Period: ${report.filters.startMonth}${report.filters.endMonth ? ` → ${report.filters.endMonth}` : ''}`
+      : `Period: ${report.filters.selectedDate}${Number(report.filters.daysRange) > 0 ? ` (±${report.filters.daysRange} days)` : ''}`,
+      { fontSize: 9, gapAfter: 2, color: '#475569' });
     textLine(doc, `Filters: taluka=${report.filters.taluka}, level=${report.filters.level}, gender=${report.filters.gender}, status=${report.filters.status}, minRisk=${report.filters.minRisk}`, { fontSize: 9, gapAfter: 10, color: '#475569' });
 
     textLine(doc, 'Summary', { font: 'Helvetica-Bold', fontSize: 12, gapAfter: 4 });

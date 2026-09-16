@@ -17,7 +17,7 @@ export default function FiltersPanel({ filters, options, onChange, onReset }) {
           Reset
         </button>
       </div>
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
         <label className="block">
           <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-slatebrand/45">Visited on date</span>
           <input type="date" value={filters.selectedDate} onChange={handle('selectedDate')} className="w-full rounded-2xl border border-slatebrand/10 bg-white px-4 py-3 outline-none focus:border-signal" />

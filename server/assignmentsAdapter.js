@@ -417,71 +417,21 @@ export async function fetchAssignedSchoolsForDate(selectedDate, filters = {}) {
     const endpoint = resolveEndpointUrl(endpointTemplate, { year, userId });
     const url = `${base}/${endpoint}`.replace(/\/\/+/g, '/');
 
-    const payloads = candidatePayloads(selectedDate, filters);
-    payloads.unshift({}); // Add empty payload for GET
+    try {
+      const response = await getJsonWithRetry(url, headers);
+      const rows = parseRows(response);
 
-    let fetched = false;
-
-    for (const body of payloads) {
-      try {
-        const response = await postJsonWithRetry(url, headers, body);
-        const rows = parseRows(response);
-
-        if (rows.length > 0) {
-          const normalized = rows.map((row) => normalizeAssignmentRow(row, userId, userName));
-          allRows.push(...normalized);
-          fetched = true;
-          break;
-        }
-
-        const message = response?.Message || response?.message || '';
-
-        if (isTruthyStatus(response?.Status) && isNoRecordMessage(message)) {
-          fetched = true;
-          break;
-        }
-
-        if (isTruthyStatus(response?.Status) && !isErrorLikeMessage(message) && !message) {
-          fetched = true;
-          break;
-        }
-
-        errors.push(`${url} with payload ${JSON.stringify(body)}: ${message || 'Empty response'}`);
-      } catch (error) {
-        errors.push(`${url} with payload ${JSON.stringify(body)}: ${error.message || String(error)}`);
+      if (rows.length > 0) {
+        allRows.push(...rows.map((row) => normalizeAssignmentRow(row, userId, userName)));
+        continue;
       }
 
-      try {
-        const response = await getJsonWithRetry(url, headers, body);
-        const rows = parseRows(response);
-
-        if (rows.length > 0) {
-          const normalized = rows.map((row) => normalizeAssignmentRow(row, userId, userName));
-          allRows.push(...normalized);
-          fetched = true;
-          break;
-        }
-
-        const message = response?.Message || response?.message || '';
-
-        if (isTruthyStatus(response?.Status) && isNoRecordMessage(message)) {
-          fetched = true;
-          break;
-        }
-
-        if (isTruthyStatus(response?.Status) && !isErrorLikeMessage(message) && !message) {
-          fetched = true;
-          break;
-        }
-
-        errors.push(`${url} [GET] with query ${JSON.stringify(body)}: ${message || 'Empty response'}`);
-      } catch (error) {
-        errors.push(`${url} [GET] with query ${JSON.stringify(body)}: ${error.message || String(error)}`);
+      const message = response?.Message || response?.message || '';
+      if (!isNoRecordMessage(message) && (isErrorLikeMessage(message) || message)) {
+        errors.push(`${url}: ${message || 'Empty response'}`);
       }
-    }
-
-    if (!fetched) {
-      // Continue to next userId, don't throw yet
+    } catch (error) {
+      errors.push(`${url}: ${error.message || String(error)}`);
     }
   }
 

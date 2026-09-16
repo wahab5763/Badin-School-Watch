@@ -22,6 +22,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   buildMonitorAssignmentsReportUrl,
   buildVisitedSchoolsReportUrl,
+  buildEmployeeAttendanceReportUrl,
   fetchSchoolVisitDetail
 } from '../lib/api';
 import { useDashboard } from '../lib/useDashboard';
@@ -46,6 +47,10 @@ function getInitialFilters() {
   };
 }
 
+function getInitialAttendanceFilters() {
+  return { startMonth: '', endMonth: '' };
+}
+
 function matches(value, selected) {
   return selected === 'all' || value === selected;
 }
@@ -55,14 +60,55 @@ function visitDateMatches(value, selectedDate) {
   return String(value).slice(0, 10) === selectedDate;
 }
 
-function hasVisitOnDate(school, selectedDate, daysRange = 0) {
-  if (!selectedDate) return false;
+function normalizeMonthRange(startMonth, endMonth) {
+  const normalizedStart = String(startMonth || '').trim();
+  const normalizedEnd = String(endMonth || '').trim();
+
+  if (!normalizedStart && !normalizedEnd) {
+    return { startMonth: '', endMonth: '' };
+  }
+
+  if (!normalizedStart) {
+    return { startMonth: normalizedEnd, endMonth: normalizedEnd };
+  }
+
+  if (!normalizedEnd) {
+    return { startMonth: normalizedStart, endMonth: normalizedStart };
+  }
+
+  return normalizedStart <= normalizedEnd
+    ? { startMonth: normalizedStart, endMonth: normalizedEnd }
+    : { startMonth: normalizedEnd, endMonth: normalizedStart };
+}
+
+function monthOnlyIso(value) {
+  const iso = String(value || '').slice(0, 10);
+  return iso ? iso.slice(0, 7) : '';
+}
+
+function visitInMonthRange(visitDateValue, startMonth, endMonth) {
+  if (!visitDateValue) return false;
+  const visitMonth = monthOnlyIso(visitDateValue);
+  if (!visitMonth) return false;
+
+  const range = normalizeMonthRange(startMonth, endMonth);
+  if (!range.startMonth) return false;
+
+  return visitMonth >= range.startMonth && visitMonth <= range.endMonth;
+}
+
+function hasVisitOnDate(school, selectedDate, daysRange = 0, startMonth = '', endMonth = '') {
   const visitDates = Array.isArray(school.visitDates) && school.visitDates.length
     ? school.visitDates
     : school.lastVisitDate
       ? [school.lastVisitDate]
       : [];
 
+  if (startMonth || endMonth) {
+    return visitDates.some((visitDate) => visitInMonthRange(visitDate, startMonth, endMonth));
+  }
+
+  if (!selectedDate) return false;
   const targetDate = new Date(selectedDate + 'T00:00:00Z');
   if (Number.isNaN(targetDate.getTime())) return false;
 
@@ -70,7 +116,7 @@ function hasVisitOnDate(school, selectedDate, daysRange = 0) {
     if (!visitDate) return false;
     const visitDateStr = String(visitDate).slice(0, 10);
     const targetDateStr = selectedDate;
-    
+
     if (daysRange === 0) {
       return visitDateStr === targetDateStr;
     }
@@ -451,6 +497,7 @@ function SchoolDetailDialog({ school, selectedDate, daysRange, onClose }) {
 
 export default function DashboardPage() {
   const [filters, setFilters] = useState(getInitialFilters());
+  const [attendanceFilters, setAttendanceFilters] = useState(getInitialAttendanceFilters());
   const [selectedSchool, setSelectedSchool] = useState(null);
   const { loading, error, data, refreshing, refresh } = useDashboard();
   const { logout } = useAuth();
@@ -522,6 +569,8 @@ export default function DashboardPage() {
     [filteredSchools, mostRecentVisitDate]
   );
 
+  const effectiveVisitLabel = filters.selectedDate || 'today';
+
   const dashboard = useMemo(() => {
     if (!data?.summary) return null;
     const schools = filteredSchools;
@@ -566,6 +615,15 @@ export default function DashboardPage() {
     const reportUrl = buildMonitorAssignmentsReportUrl(filters);
     window.open(reportUrl, '_blank', 'noopener,noreferrer');
   }, [filters]);
+
+  const handleDownloadEmployeeAttendance = React.useCallback(() => {
+    const reportUrl = buildEmployeeAttendanceReportUrl({
+      selectedDate: filters.selectedDate,
+      startMonth: attendanceFilters.startMonth,
+      endMonth: attendanceFilters.endMonth
+    });
+    window.open(reportUrl, '_blank', 'noopener,noreferrer');
+  }, [filters.selectedDate, attendanceFilters]);
 
   return (
     <div className="min-h-screen bg-[#ECF2F6] text-slatebrand">
@@ -642,18 +700,69 @@ export default function DashboardPage() {
             </div>
 
 
-            <div className="mt-6 flex items-center justify-between gap-4 rounded-5xl border border-slatebrand/8 bg-white/70 px-5 py-4 shadow-soft">
-              <div>
-                <div className="text-xs uppercase tracking-[0.24em] text-slatebrand/45">Monitor assignments</div>
-                <div className="mt-1 text-sm text-slatebrand/70">All schools assigned to each monitor on the selected date</div>
+            <div className="mt-6 grid gap-4 lg:grid-cols-2">
+              <div className="rounded-5xl border border-slatebrand/8 bg-white/70 px-5 py-4 shadow-soft">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.24em] text-slatebrand/45">Monitor assignments</div>
+                  <div className="mt-1 text-sm text-slatebrand/70">All schools assigned to each monitor on the selected date.</div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadMonitorAssignments}
+                    className="shrink-0 rounded-full border border-slatebrand/10 bg-white px-4 py-2 text-sm font-medium text-slatebrand transition hover:-translate-y-px"
+                  >
+                    Download monitor assignments PDF
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={handleDownloadMonitorAssignments}
-                className="shrink-0 rounded-full border border-slatebrand/10 bg-white px-4 py-2 text-sm font-medium text-slatebrand transition hover:-translate-y-px"
-              >
-                Download monitor assignments PDF
-              </button>
+
+              <div className="rounded-5xl border border-slatebrand/8 bg-white/70 px-5 py-4 shadow-soft">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.24em] text-slatebrand/45">Employee attendance</div>
+                    <div className="mt-1 text-sm text-slatebrand/70">Export attendance independently using a month range. Falls back to the selected date when no month range is set.</div>
+                  </div>
+                  {(attendanceFilters.startMonth || attendanceFilters.endMonth) && (
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceFilters(getInitialAttendanceFilters())}
+                      className="shrink-0 rounded-full border border-slatebrand/10 px-3 py-1.5 text-xs font-medium text-slatebrand/60 transition hover:text-slatebrand hover:-translate-y-px"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-slatebrand/45">Attendance start month</span>
+                    <input
+                      type="month"
+                      value={attendanceFilters.startMonth}
+                      onChange={(e) => setAttendanceFilters((prev) => ({ ...prev, startMonth: e.target.value }))}
+                      className="w-full rounded-2xl border border-slatebrand/10 bg-white px-4 py-3 outline-none focus:border-signal"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-slatebrand/45">Attendance end month</span>
+                    <input
+                      type="month"
+                      value={attendanceFilters.endMonth}
+                      onChange={(e) => setAttendanceFilters((prev) => ({ ...prev, endMonth: e.target.value }))}
+                      className="w-full rounded-2xl border border-slatebrand/10 bg-white px-4 py-3 outline-none focus:border-signal"
+                    />
+                  </label>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDownloadEmployeeAttendance}
+                    className="shrink-0 rounded-full border border-slatebrand/10 bg-slatebrand/5 px-4 py-2 text-sm font-medium text-slatebrand transition hover:-translate-y-px"
+                  >
+                    Download employee attendance workbook
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="mt-4 grid gap-6">

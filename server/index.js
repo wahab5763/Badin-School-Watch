@@ -4,12 +4,13 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { readSchoolRows } from './csv.js';
-import { buildLiveDashboard, fetchSchoolVisitDetail } from './mneAdapter.js';
+import { buildLiveDashboard, fetchSchoolVisitDetail, buildHeaders } from './mneAdapter.js';
 import {
   buildMonitorAssignmentSummaryPdfWithAssignments,
   buildVisitedSchoolsReportPdf,
   parseVisitedSchoolsReportFilters
 } from './visitedSchoolsReport.js';
+import { buildEmployeeAttendanceReportWorkbook } from './attendanceReport.js';
 import { fetchAssignedSchoolsForDate } from './assignmentsAdapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -31,6 +32,84 @@ const academicYearMonths = [
 let latestPayload = null;
 let activeRefreshPromise = null;
 
+// ── Background monthly-attendance prefetch ────────────────────────────────────
+// After each dashboard load, all per-month attendance is fetched concurrently
+// and stored on school.monthlyAttendance so the report endpoint has zero API
+// calls to make.
+
+let monthlyAttendancePrefetchPromise = null;
+let monthlyAttendancePrefetchStartedAt = 0;
+
+async function fetchOneMid(mid, headers, base) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 7000);
+  try {
+    const url = `${base}//Schools/GetTeachersAttendanceByMonitoringId?MonitoringId=${mid}`;
+    const res = await fetch(url, { headers, signal: controller.signal });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json?.Data) ? json.Data : [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runMonthlyAttendancePrefetch(payload) {
+  const headers = buildHeaders();
+  const base = (process.env.MNE_API_BASE_URL || 'https://mne.seld.gos.pk/Services/api').replace(/\/$/, '');
+  if (!Object.keys(headers).length || !Array.isArray(payload?.schools)) return;
+
+  // Collect unique monitoring IDs across all schools for all academic year months
+  const midSet = new Set();
+  const assignments = []; // { schoolIdx, month, mid }
+
+  for (let si = 0; si < payload.schools.length; si++) {
+    const history = Array.isArray(payload.schools[si].visitHistory) ? payload.schools[si].visitHistory : [];
+    for (const { month } of academicYearMonths) {
+      const visit = history.find((v) => String(v.date || '').slice(0, 7) === month);
+      if (visit?.monitoringId) {
+        midSet.add(visit.monitoringId);
+        assignments.push({ schoolIdx: si, month, mid: visit.monitoringId });
+      }
+    }
+  }
+
+  const mids = [...midSet];
+  if (mids.length === 0) return;
+
+  // Fetch concurrently in batches of 50
+  const attByMid = new Map();
+  const concurrency = 50;
+  for (let i = 0; i < mids.length; i += concurrency) {
+    const batch = mids.slice(i, i + concurrency);
+    const results = await Promise.all(batch.map((mid) => fetchOneMid(mid, headers, base)));
+    batch.forEach((mid, j) => attByMid.set(mid, results[j]));
+  }
+
+  // Write results into latestPayload.schools in place
+  if (latestPayload?.schools) {
+    for (const { schoolIdx, month, mid } of assignments) {
+      const school = latestPayload.schools[schoolIdx];
+      if (school) {
+        if (!school.monthlyAttendance) school.monthlyAttendance = {};
+        if (attByMid.has(mid)) school.monthlyAttendance[month] = attByMid.get(mid);
+      }
+    }
+  }
+}
+
+function triggerMonthlyAttendancePrefetch(payload) {
+  if (monthlyAttendancePrefetchPromise) return;
+  monthlyAttendancePrefetchStartedAt = Date.now();
+  monthlyAttendancePrefetchPromise = runMonthlyAttendancePrefetch(payload)
+    .catch((err) => console.error('[prefetch] monthly attendance failed:', err?.message))
+    .finally(() => { monthlyAttendancePrefetchPromise = null; });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function refreshLiveData() {
   if (activeRefreshPromise) return activeRefreshPromise;
 
@@ -40,6 +119,9 @@ async function refreshLiveData() {
   activeRefreshPromise = buildLiveDashboard(schoolRows, academicYear, academicYearMonths)
     .then((payload) => {
       latestPayload = payload;
+      // Reset and restart background prefetch whenever fresh data arrives
+      monthlyAttendancePrefetchPromise = null;
+      triggerMonthlyAttendancePrefetch(payload);
       return payload;
     })
     .finally(() => {
@@ -57,6 +139,15 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, schools: currentRows.length });
 });
 
+// Strip server-only fields before sending to the client
+function toClientPayload(payload) {
+  if (!payload) return payload;
+  return {
+    ...payload,
+    schools: (payload.schools || []).map(({ monthlyAttendance, visitHistory, ...rest }) => rest)
+  };
+}
+
 app.get('/api/dashboard', async (_req, res) => {
   try {
     const currentRows = readSchoolRows(csvPath);
@@ -65,9 +156,9 @@ app.get('/api/dashboard', async (_req, res) => {
 
     if (!latestPayload || rowsChanged) {
       const fresh = await refreshLiveData();
-      return res.json(fresh);
+      return res.json(toClientPayload(fresh));
     }
-    return res.json(latestPayload);
+    return res.json(toClientPayload(latestPayload));
   } catch (error) {
     if (latestPayload) {
       const message = error.message || 'Dashboard refresh warning';
@@ -77,7 +168,7 @@ app.get('/api/dashboard', async (_req, res) => {
         stale: true,
         staleAt: new Date().toISOString()
       };
-      return res.json(latestPayload);
+      return res.json(toClientPayload(latestPayload));
     }
     return res.status(500).json({ error: error.message || 'Dashboard error' });
   }
@@ -86,7 +177,7 @@ app.get('/api/dashboard', async (_req, res) => {
 app.post('/api/dashboard/refresh', async (_req, res) => {
   try {
     const fresh = await refreshLiveData();
-    return res.json(fresh);
+    return res.json(toClientPayload(fresh));
   } catch (error) {
     if (latestPayload) {
       const message = error.message || 'Dashboard refresh warning';
@@ -96,7 +187,7 @@ app.post('/api/dashboard/refresh', async (_req, res) => {
         stale: true,
         staleAt: new Date().toISOString()
       };
-      return res.json(latestPayload);
+      return res.json(toClientPayload(latestPayload));
     }
     return res.status(500).json({ error: error.message || 'Dashboard error' });
   }
@@ -177,6 +268,43 @@ app.get('/api/reports/monitor-assignments.pdf', async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(pdfBuffer);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Report generation error' });
+  }
+});
+
+app.get('/api/reports/employee-attendance.xlsx', async (req, res) => {
+  try {
+    const currentRows = readSchoolRows(csvPath);
+    const payloadRequestedSchools = Number(latestPayload?.liveDiagnostics?.requestedSchools || 0);
+    const rowsChanged = payloadRequestedSchools !== currentRows.length;
+
+    const payload = (!latestPayload || rowsChanged)
+      ? await refreshLiveData()
+      : latestPayload;
+
+    // If the background prefetch hasn't finished yet, wait for it so that all
+    // months' attendance data is available before building the workbook.
+    // If the prefetch already completed (promise is null), proceed immediately.
+    if (monthlyAttendancePrefetchPromise) {
+      try { await monthlyAttendancePrefetchPromise; } catch (e) {
+        console.warn('[report] prefetch wait error:', e?.message);
+      }
+    }
+
+    const workbookBuffer = await buildEmployeeAttendanceReportWorkbook(payload, req.query || {});
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const startMonth = String(req.query.startMonth || '').trim();
+    const endMonth = String(req.query.endMonth || '').trim();
+    const rangeLabel = startMonth
+      ? endMonth && endMonth !== startMonth ? `${startMonth}-to-${endMonth}` : startMonth
+      : '';
+    const filename = `employee-attendance-${rangeLabel || stamp}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(workbookBuffer);
   } catch (error) {
     return res.status(500).json({ error: error.message || 'Report generation error' });
   }

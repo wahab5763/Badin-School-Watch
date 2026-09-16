@@ -34,7 +34,7 @@ function numericTotal(entry = {}) {
     .reduce((sum, [, value]) => sum + Number(value), 0);
 }
 
-function buildHeaders() {
+export function buildHeaders() {
   try {
     return JSON.parse(process.env.MNE_API_HEADERS_JSON || '{}');
   } catch {
@@ -315,7 +315,11 @@ function parseAttendance(data, schoolId) {
       leaveType: entry.Leave_Type || null,
       absentReason: entry.Absent_Reason || null,
       remarks: entry.Remarks || null,
-      status: parseTeacherStatus(entry)
+      status: parseTeacherStatus(entry),
+      employeeCode: entry.Employee_Code || null,
+      designationName: entry.Designation_Name || null,
+      staffType: entry.Staff_Type || null,
+      gender: entry.Employee_Gender || null
     };
   });
 
@@ -397,7 +401,7 @@ function buildFlags(census, attendance, enrollment, textbooks) {
   return flags;
 }
 
-function buildSchoolRecord({ row, schoolInfo, visits, allVisitDates, selectedVisit, academicYearMonths, census, attendance, enrollment, textbooks, visitEvidence, monitor }) {
+function buildSchoolRecord({ row, schoolInfo, visits, allVisitDates, selectedVisit, academicYearMonths, census, attendance, enrollment, textbooks, visitEvidence, monitor, rawVisits, monthlyAttendance }) {
   const flags = buildFlags(census, attendance, enrollment, textbooks);
   const riskScore = Number(Math.min(99, Math.max(15, 100 - census.readiness * 0.65 + textbooks.shortage / Math.max(enrollment.total || 1, 1) * 22 + (100 - attendance.rate) * 0.3)).toFixed(1));
 
@@ -415,6 +419,12 @@ function buildSchoolRecord({ row, schoolInfo, visits, allVisitDates, selectedVis
     lastVisitDate: selectedVisit?.Monitoring_Start_Date || null,
     visitCount: visits.length,
     visitDates: allVisitDates,
+    monthlyAttendance: monthlyAttendance || {},
+    visitHistory: (rawVisits || visits).map((v) => ({
+      date: String(v.Monitoring_Start_Date || ''),
+      monitoringId: String(v.Monitoring_ID || ''),
+      monitorName: String(v.User_Name || '')
+    })).filter((v) => v.date && v.monitoringId),
     monthly: buildMonthlySummary(visits, academicYearMonths),
     coordinates: normalizeCoordinates(schoolInfo.LATITUDE, schoolInfo.LONGITUDE, row.coordinates),
     attendance,
@@ -468,6 +478,7 @@ export async function fetchSchoolVisitDetail(row, academicYear, academicYearMont
     row,
     schoolInfo,
     visits,
+    rawVisits: allVisits,
     allVisitDates: allVisits.map((visit) => visit.Monitoring_Start_Date).filter(Boolean),
     selectedVisit,
     academicYearMonths,
@@ -476,7 +487,8 @@ export async function fetchSchoolVisitDetail(row, academicYear, academicYearMont
     enrollment,
     textbooks,
     visitEvidence,
-    monitor
+    monitor,
+    monthlyAttendance: {}
   });
 }
 
@@ -503,6 +515,7 @@ export async function buildLiveDashboard(rows, academicYear, academicYearMonths,
       let rowFailed = false;
       let schoolInfo = {};
       let visits = [];
+      let allVisits = [];
       let allVisitDates = [];
       let latestVisit = null;
       let census = {
@@ -541,7 +554,7 @@ export async function buildLiveDashboard(rows, academicYear, academicYearMonths,
 
       try {
         const visitsResponse = await fetchJson(`${base}//Schools/GetMSchoollastvisitsById?SchoolId=${row.schoolId}`, { headers });
-        const allVisits = sortedVisits(visitsResponse?.Data || []);
+        allVisits = sortedVisits(visitsResponse?.Data || []);
         visits = academicVisits(allVisits, academicYear);
         allVisitDates = allVisits.map((visit) => visit.Monitoring_Start_Date).filter(Boolean);
         latestVisit = allVisits[0] || null;
@@ -586,6 +599,7 @@ export async function buildLiveDashboard(rows, academicYear, academicYearMonths,
         row,
         schoolInfo,
         visits,
+        rawVisits: allVisits,
         allVisitDates,
         selectedVisit: latestVisit,
         academicYearMonths,
@@ -594,7 +608,8 @@ export async function buildLiveDashboard(rows, academicYear, academicYearMonths,
         enrollment,
         textbooks,
         visitEvidence,
-        monitor
+        monitor,
+        monthlyAttendance: {}
       }));
 
       if (typeof hooks.onSchool === 'function') {
