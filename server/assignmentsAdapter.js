@@ -170,8 +170,8 @@ function postJsonWithRetry(url, headers, body) {
 }
 
 function getJsonWithRetry(url, headers, query = {}) {
-  const timeoutMs = Math.max(30000, Number(process.env.MNE_API_TIMEOUT_MS || 30000));
-  const retryCount = Math.max(0, Number(process.env.MNE_API_RETRY_COUNT || 2));
+  const timeoutMs = Math.max(5000, Number(process.env.MNE_API_ASSIGNMENTS_TIMEOUT_MS || 10000));
+  const retryCount = Math.max(0, Number(process.env.MNE_API_ASSIGNMENTS_RETRY_COUNT || 0));
 
   const params = new URLSearchParams();
   Object.entries(query || {}).forEach(([key, value]) => {
@@ -413,7 +413,7 @@ export async function fetchAssignedSchoolsForDate(selectedDate, filters = {}) {
   const allRows = [];
   const errors = [];
 
-  for (const { userId, userName } of users) {
+  await Promise.all(users.map(async ({ userId, userName }) => {
     const endpoint = resolveEndpointUrl(endpointTemplate, { year, userId });
     const url = `${base}/${endpoint}`;
 
@@ -423,7 +423,7 @@ export async function fetchAssignedSchoolsForDate(selectedDate, filters = {}) {
 
       if (rows.length > 0) {
         allRows.push(...rows.map((row) => normalizeAssignmentRow(row, userId, userName)));
-        continue;
+        return;
       }
 
       const message = response?.Message || response?.message || '';
@@ -433,7 +433,7 @@ export async function fetchAssignedSchoolsForDate(selectedDate, filters = {}) {
     } catch (error) {
       errors.push(`${url}: ${error.message || String(error)}`);
     }
-  }
+  }));
 
   if (allRows.length === 0) {
     const sample = errors.slice(0, 3).join(' | ');
