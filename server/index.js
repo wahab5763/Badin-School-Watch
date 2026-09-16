@@ -15,7 +15,7 @@ import { fetchAssignedSchoolsForDate } from './assignmentsAdapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const app = express();
+export const app = express();
 const port = Number(process.env.PORT || 8787);
 const projectRoot = path.resolve(__dirname, '..');
 const csvPath = path.resolve(projectRoot, process.env.SCHOOL_DATA_PATH || './school_data.csv');
@@ -324,7 +324,7 @@ async function syncLiveAndExit() {
 
 if (process.argv.includes('--sync-live')) {
   syncLiveAndExit();
-} else {
+} else if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
   app.listen(port, () => {
     console.log(`Badin School Watch server listening on http://localhost:${port}`);
   });
