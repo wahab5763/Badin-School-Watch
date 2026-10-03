@@ -1,9 +1,27 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import process from 'node:process';
 import net from 'node:net';
 
 const isWin = process.platform === 'win32';
 const children = [];
+
+function killPort(port) {
+  if (isWin) {
+    spawnSync('powershell', [
+      '-NoProfile',
+      '-ExecutionPolicy', 'Bypass',
+      '-Command',
+      `Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`
+    ], { stdio: 'ignore' });
+    return;
+  }
+
+  try {
+    spawnSync('bash', ['-lc', `lsof -ti tcp:${port} | xargs -r kill -9 >/dev/null 2>&1 || true`], { stdio: 'ignore' });
+  } catch {
+    // Ignore environment differences; the app is still free to start if no port owner exists.
+  }
+}
 
 function probePort(port, host) {
   return new Promise((resolve) => {
@@ -87,13 +105,18 @@ process.on('SIGINT', () => shutdown(null, 0));
 process.on('SIGTERM', () => shutdown(null, 0));
 
 const serverPort = Number(process.env.PORT || 8787);
+const clientPort = 5173;
+
+killPort(serverPort);
+killPort(clientPort);
+
 const portInUse = await checkPortInUse(serverPort);
 
 if (portInUse) {
-  process.stdout.write(`[dev] Port ${serverPort} is already in use; reusing existing API server.\n`);
-} else {
-  run('server', 'node', ['server/index.js']);
+  process.stdout.write(`[dev] Port ${serverPort} still appears in use after cleanup; continuing with a fresh startup attempt.\n`);
 }
+
+run('server', 'node', ['server/index.js']);
 
 if (process.env.npm_execpath) {
   run('client', process.execPath, [process.env.npm_execpath, 'run', 'client']);

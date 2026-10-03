@@ -81,6 +81,34 @@ export async function refreshDashboard() {
   return response.json();
 }
 
+export async function fetchMonitorAssignmentDistricts() {
+  const timeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || 300000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch('/api/districts', { method: 'GET', cache: 'no-store', signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted || isAbortError(error)) {
+      throw new Error(timeoutErrorMessage('/api/districts', timeoutMs));
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const payload = await response.json();
+      if (payload?.error) detail = `: ${payload.error}`;
+    } catch {}
+    throw new Error(`Failed to load districts (${response.status})${detail}`);
+  }
+  const payload = await response.json();
+  return Array.isArray(payload?.districts) ? payload.districts : [];
+}
+
 export async function fetchSchoolVisitDetail(schoolId, selectedDate, daysRange = 0) {
   const timeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || 300000);
   const params = new URLSearchParams({
@@ -112,6 +140,17 @@ export function buildMonitorAssignmentsReportUrl(filters = {}) {
     params.set(key, String(filters[key]));
   });
 
+  const districtValues = Array.isArray(filters.districts)
+    ? filters.districts
+    : filters.district
+      ? [filters.district]
+      : [];
+
+  districtValues.forEach((district) => {
+    if (district === undefined || district === null || district === '') return;
+    params.append('districts', String(district));
+  });
+
   const query = params.toString();
   return query ? `/api/reports/monitor-assignments.pdf?${query}` : '/api/reports/monitor-assignments.pdf';
 }
@@ -129,4 +168,25 @@ export function buildEmployeeAttendanceReportUrl(filters = {}) {
 
   const query = params.toString();
   return query ? `/api/reports/employee-attendance.xlsx?${query}` : '/api/reports/employee-attendance.xlsx';
+}
+
+export function buildMonitorPerformanceReportUrl(filters = {}) {
+  const params = new URLSearchParams();
+
+  if (filters.month) {
+    params.set('month', String(filters.month));
+  } else if (filters.selectedDate) {
+    params.set('month', String(filters.selectedDate).slice(0, 7));
+  }
+
+  if (filters.districts && Array.isArray(filters.districts)) {
+    filters.districts.forEach((district) => {
+      if (district) params.append('districts', String(district));
+    });
+  } else if (filters.district) {
+    params.append('districts', String(filters.district));
+  }
+
+  const query = params.toString();
+  return query ? `/api/reports/monitor-performance.xlsx?${query}` : '/api/reports/monitor-performance.xlsx';
 }

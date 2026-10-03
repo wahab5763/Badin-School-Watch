@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { readSchoolRows } from './csv.js';
+import { readMonitorAssignmentDistrictsFromCsv, readSchoolRows } from './csv.js';
 import { buildLiveDashboard, fetchSchoolVisitDetail, buildHeaders } from './mneAdapter.js';
 import {
   buildMonitorAssignmentSummaryPdfWithAssignments,
@@ -11,7 +11,8 @@ import {
   parseVisitedSchoolsReportFilters
 } from './visitedSchoolsReport.js';
 import { buildEmployeeAttendanceReportWorkbook } from './attendanceReport.js';
-import { fetchAssignedSchoolsForDate } from './assignmentsAdapter.js';
+import { buildMonitorPerformanceWorkbook } from './monitorPerformanceReport.js';
+import { fetchAssignedSchoolsForDate, fetchAssignedSchoolsForMonth } from './assignmentsAdapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -108,6 +109,103 @@ function triggerMonthlyAttendancePrefetch(payload) {
     .finally(() => { monthlyAttendancePrefetchPromise = null; });
 }
 
+// In-memory cache of live visit-date lookups, keyed by schoolId. Large districts can
+// have 900+ assigned schools per month, so caching avoids re-hitting the live API for
+// every report request (which previously made the endpoint too slow to finish before
+// a short timeout silently discarded all results — see fetchSchoolVisitDatesForAssignments).
+const schoolVisitsCache = new Map(); // schoolId -> { fetchedAt, record }
+const schoolVisitsCacheTtlMs = Math.max(60000, Number(process.env.MNE_API_SCHOOL_VISITS_CACHE_TTL_MS || 6 * 60 * 60 * 1000));
+
+async function fetchSchoolVisitDatesForAssignments(assignmentRows = [], options = {}) {
+  const headers = buildHeaders();
+  const base = (process.env.MNE_API_BASE_URL || 'https://mne.seld.gos.pk/Services/api').replace(/\/$/, '');
+
+  if (!Object.keys(headers).length || !Array.isArray(assignmentRows) || !assignmentRows.length) {
+    return [];
+  }
+
+  const uniqueSchoolIds = [...new Set(assignmentRows
+    .map((row) => String(row?.schoolId || row?.School_ID || row?.school_id || '').trim())
+    .filter(Boolean))];
+
+  if (!uniqueSchoolIds.length) {
+    return [];
+  }
+
+  // Stop starting new fetches past this point so large multi-district requests still
+  // return whatever was gathered in time instead of the caller discarding everything.
+  const deadlineAt = Number(options.deadlineAt) || (Date.now() + 240000);
+  const timeoutMs = Math.max(8000, Number(process.env.MNE_API_REPORT_TIMEOUT_MS || 15000));
+  // Only the visits endpoint is required — school name/semis/district already come
+  // from the assignment row, so skip the extra GetSchoolById call per school to
+  // roughly halve the number of live requests needed for large districts.
+  const concurrency = Math.max(2, Math.min(24, Number(process.env.MNE_API_REPORT_CONCURRENCY || process.env.MNE_API_CONCURRENCY || 12)));
+
+  const now = Date.now();
+  const schoolRecords = [];
+  const idsToFetch = [];
+
+  uniqueSchoolIds.forEach((schoolId) => {
+    const cached = schoolVisitsCache.get(schoolId);
+    if (cached && (now - cached.fetchedAt) < schoolVisitsCacheTtlMs) {
+      schoolRecords.push(cached.record);
+    } else {
+      idsToFetch.push(schoolId);
+    }
+  });
+
+  let index = 0;
+
+  async function worker() {
+    while (index < idsToFetch.length) {
+      if (Date.now() >= deadlineAt) return;
+      const currentIndex = index;
+      index += 1;
+      const schoolId = idsToFetch[currentIndex];
+      const rowMatch = assignmentRows.find((row) => String(row?.schoolId || row?.School_ID || row?.school_id || '').trim() === schoolId) || {};
+
+      try {
+        const controller = new AbortController();
+        // Clamp to whatever time is actually left so one slow request can't eat
+        // into the remaining budget for the rest of the batch.
+        const attemptTimeoutMs = Math.max(1000, Math.min(timeoutMs, deadlineAt - Date.now()));
+        const timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
+
+        const visitsResult = await fetch(`${base}//Schools/GetMSchoollastvisitsById?SchoolId=${schoolId}`, { headers, signal: controller.signal }).then(async (response) => {
+          if (!response.ok) throw new Error(`Visits fetch failed ${response.status}`);
+          return response.json();
+        }).catch(() => null);
+
+        clearTimeout(timeout);
+
+        const visitsData = visitsResult?.Data || [];
+        const visitDates = [...new Set((visitsData || [])
+          .map((visit) => String(visit?.Monitoring_Start_Date || '').slice(0, 10))
+          .filter(Boolean))];
+
+        const record = {
+          schoolId,
+          schoolName: rowMatch.schoolName || `School ${schoolId}`,
+          semis: rowMatch.semis || '',
+          district: rowMatch.district || '',
+          visitDates
+        };
+
+        schoolRecords.push(record);
+        // Only cache successful lookups so a transient failure gets retried next time.
+        if (visitsResult) {
+          schoolVisitsCache.set(schoolId, { fetchedAt: Date.now(), record });
+        }
+      } catch {
+        // Ignore individual fetch failures so the export still returns for the selected district.
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, idsToFetch.length) }, () => worker()));
+  return schoolRecords;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function refreshLiveData() {
@@ -142,8 +240,14 @@ app.get('/api/health', (_req, res) => {
 // Strip server-only fields before sending to the client
 function toClientPayload(payload) {
   if (!payload) return payload;
+
+  const districtList = readMonitorAssignmentDistrictsFromCsv(process.env.MNE_API_USERIDS_CSV_PATH || './public/MA_userIds.csv');
+  const schoolDistricts = [...new Set((payload.schools || []).map((school) => school.district).filter(Boolean))].sort();
+  const mergedDistricts = [...new Set([...districtList, ...schoolDistricts])].sort((a, b) => a.localeCompare(b));
+
   return {
     ...payload,
+    districts: mergedDistricts,
     schools: (payload.schools || []).map(({ monthlyAttendance, visitHistory, ...rest }) => rest)
   };
 }
@@ -171,6 +275,18 @@ app.get('/api/dashboard', async (_req, res) => {
       return res.json(toClientPayload(latestPayload));
     }
     return res.status(500).json({ error: error.message || 'Dashboard error' });
+  }
+});
+
+app.get('/api/districts', (_req, res) => {
+  try {
+    const csvDistricts = readMonitorAssignmentDistrictsFromCsv(process.env.MNE_API_USERIDS_CSV_PATH || './public/MA_userIds.csv');
+    const payloadDistricts = Array.isArray(latestPayload?.districts) ? latestPayload.districts : [];
+    const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+    const merged = [...new Set([...csvDistricts, ...payloadDistricts])].sort((a, b) => collator.compare(a, b));
+    return res.json({ districts: merged });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'District list error' });
   }
 });
 
@@ -301,6 +417,91 @@ app.get('/api/reports/employee-attendance.xlsx', async (req, res) => {
       ? endMonth && endMonth !== startMonth ? `${startMonth}-to-${endMonth}` : startMonth
       : '';
     const filename = `employee-attendance-${rangeLabel || stamp}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(workbookBuffer);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Report generation error' });
+  }
+});
+
+app.get('/api/reports/monitor-performance.xlsx', async (req, res) => {
+  // Shared clock so the assignment fetch and the per-school visit fetch together stay
+  // under the proxy/browser budget instead of each getting the full budget independently.
+  const requestDeadlineAt = Date.now() + Math.max(15000, Number(process.env.MNE_API_REPORT_RACE_TIMEOUT_MS || 150000));
+  try {
+    const currentRows = readSchoolRows(csvPath);
+    const payloadRequestedSchools = Number(latestPayload?.liveDiagnostics?.requestedSchools || 0);
+    const rowsChanged = payloadRequestedSchools !== currentRows.length;
+
+    const payload = (!latestPayload || rowsChanged)
+      ? await refreshLiveData()
+      : latestPayload;
+
+    const month = String(req.query.month || req.query.selectedMonth || new Date().toISOString().slice(0, 7)).trim();
+    const districtFilters = parseVisitedSchoolsReportFilters(req.query || {});
+    let assignmentRows = [];
+    let noDataReason = '';
+
+    if (month) {
+      const assignmentStartedAt = Date.now();
+      try {
+        // Reserve roughly half the remaining budget for the assignment lookup so the
+        // per-school visit fetch that follows still has a meaningful window left,
+        // even when many districts/monitors are selected at once.
+        const assignmentDeadlineAt = Date.now() + Math.round((requestDeadlineAt - Date.now()) * 0.5);
+        assignmentRows = await fetchAssignedSchoolsForMonth(month, { ...districtFilters, deadlineAt: assignmentDeadlineAt });
+      } catch (error) {
+        assignmentRows = [];
+        noDataReason = error?.message || 'Live monitor data could not be fetched for the selected month.';
+      }
+      console.log(`[monitor-performance] assignment fetch: ${assignmentRows.length} rows in ${Date.now() - assignmentStartedAt}ms`);
+    }
+
+    let effectiveSchools = Array.isArray(payload?.schools) ? payload.schools : [];
+    if (assignmentRows.length && payload?.schools?.length < 5000) {
+      // Badin schools already have visit dates from the CSV/academic-year sync in
+      // payload.schools, so skip re-fetching them live — otherwise a mixed selection
+      // (e.g. Badin + another district) wastes the whole time budget re-fetching
+      // hundreds of Badin schools that were never missing data in the first place,
+      // leaving no time left for the districts that actually need the live lookup.
+      const knownSchoolIds = new Set((effectiveSchools || []).map((s) => String(s?.schoolId || '').trim()).filter(Boolean));
+      const knownSemis = new Set((effectiveSchools || []).map((s) => String(s?.semis || '').trim()).filter(Boolean));
+      const rowsNeedingLiveFetch = assignmentRows.filter((row) => {
+        const schoolId = String(row?.schoolId || '').trim();
+        const semis = String(row?.semis || '').trim();
+        return !(schoolId && knownSchoolIds.has(schoolId)) && !(semis && knownSemis.has(semis));
+      });
+
+      // Non-Badin districts have no CSV-backed schools, so their visit dates rely
+      // entirely on this live fetch. Districts with hundreds of assigned schools (or
+      // "select all districts") can take minutes on the first request (subsequent
+      // requests are much faster thanks to the in-memory cache). The old approach
+      // raced the fetch against a timeout and threw away ALL progress when it lost,
+      // which both showed 0 visits and — once the budget exceeded the Vite dev proxy's
+      // own timeout — caused the browser to see ERR_EMPTY_RESPONSE. Now the fetch itself
+      // stops at the deadline and returns whatever it already gathered.
+      const visitsStartedAt = Date.now();
+      try {
+        const liveSchoolRecords = await fetchSchoolVisitDatesForAssignments(rowsNeedingLiveFetch, { deadlineAt: requestDeadlineAt });
+        effectiveSchools = [...effectiveSchools, ...(Array.isArray(liveSchoolRecords) ? liveSchoolRecords : [])];
+        console.log(`[monitor-performance] visits fetch: ${rowsNeedingLiveFetch.length} candidate schools, ${liveSchoolRecords.length} records in ${Date.now() - visitsStartedAt}ms`);
+      } catch (error) {
+        console.log(`[monitor-performance] visits fetch failed after ${Date.now() - visitsStartedAt}ms: ${error?.message}`);
+        effectiveSchools = Array.isArray(payload?.schools) ? payload.schools : [];
+      }
+    }
+
+    const workbookBuffer = await buildMonitorPerformanceWorkbook({
+      ...payload,
+      schools: effectiveSchools
+    }, {
+      month,
+      districts: districtFilters.districts
+    }, assignmentRows, noDataReason);
+
+    const filename = `monitor-performance-${month || new Date().toISOString().slice(0, 7)}.xlsx`;
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

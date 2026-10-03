@@ -169,9 +169,9 @@ function postJsonWithRetry(url, headers, body) {
   });
 }
 
-function getJsonWithRetry(url, headers, query = {}) {
-  const timeoutMs = Math.max(5000, Number(process.env.MNE_API_ASSIGNMENTS_TIMEOUT_MS || 10000));
-  const retryCount = Math.max(0, Number(process.env.MNE_API_ASSIGNMENTS_RETRY_COUNT || 0));
+function getJsonWithRetry(url, headers, query = {}, deadlineAt = Infinity) {
+  const timeoutMs = Math.max(15000, Number(process.env.MNE_API_ASSIGNMENTS_TIMEOUT_MS || process.env.MNE_API_TIMEOUT_MS || 30000));
+  const retryCount = Math.max(0, Number(process.env.MNE_API_ASSIGNMENTS_RETRY_COUNT ?? process.env.MNE_API_RETRY_COUNT ?? 2));
 
   const params = new URLSearchParams();
   Object.entries(query || {}).forEach(([key, value]) => {
@@ -182,8 +182,17 @@ function getJsonWithRetry(url, headers, query = {}) {
 
   return new Promise(async (resolve, reject) => {
     for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      // Clamp each attempt to whatever time is actually left so a handful of slow/flaky
+      // users (each normally allowed up to timeoutMs * (retryCount + 1) ≈ 90s) can't
+      // single-handedly blow through the overall report request budget.
+      const remainingMs = deadlineAt - Date.now();
+      if (remainingMs <= 0) {
+        return reject(new Error(`Request budget exhausted before ${finalUrl} could be fetched`));
+      }
+      const attemptTimeoutMs = Math.min(timeoutMs, remainingMs);
+
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      const timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
       try {
         const response = await fetch(finalUrl, {
           method: 'GET',
@@ -207,9 +216,9 @@ function getJsonWithRetry(url, headers, query = {}) {
         clearTimeout(timeout);
         const message = String(error?.message || '').toLowerCase();
         const isTimeout = error?.name === 'AbortError' || message.includes('abort');
-        if (attempt < retryCount) continue;
+        if (attempt < retryCount && Date.now() < deadlineAt) continue;
         if (isTimeout) {
-          return reject(new Error(`Request timed out after ${timeoutMs}ms for ${finalUrl}`));
+          return reject(new Error(`Request timed out after ${attemptTimeoutMs}ms for ${finalUrl}`));
         }
         return reject(error);
       }
@@ -313,17 +322,55 @@ function getByCandidates(row, names) {
   return null;
 }
 
-function normalizeAssignmentRow(row, userId = null, userName = null) {
+export function normalizeDistrictList(value) {
+  const parts = Array.isArray(value) ? value : [value];
+  const seen = new Set();
+  const normalized = [];
+
+  const toDistrictStrings = (item) => {
+    if (item === null || item === undefined) return [];
+    if (Array.isArray(item)) return item.flatMap((entry) => toDistrictStrings(entry));
+    if (typeof item === 'object') {
+      const candidate = item.name || item.district || item.label || item.value || item.title;
+      return candidate === undefined || candidate === null || candidate === '' ? [] : [String(candidate)];
+    }
+    return String(item).split(',');
+  };
+
+  parts.flatMap((item) => toDistrictStrings(item)).forEach((raw) => {
+    const district = String(raw || '').trim();
+    if (!district || district.toLowerCase() === 'all') return;
+    const key = district.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    normalized.push(district);
+  });
+
+  return normalized;
+}
+
+export function matchesDistrictSelection(rowDistrict, selectedDistricts = []) {
+  const selected = normalizeDistrictList(selectedDistricts);
+  if (!selected.length) return true;
+  const rowValue = String(rowDistrict || '').trim();
+  if (!rowValue) return false;
+  return selected.some((district) => String(district).trim().toLowerCase() === rowValue.toLowerCase());
+}
+
+function normalizeAssignmentRow(row, userId = null, userName = null, userDistrict = null) {
   const monitorNameFromRow = getByCandidates(row, [
     'user_name', 'User_Name', 'username', 'UserName',
     'monitor_name', 'MonitorName', 'Visited_By',
     'Assigned_To', 'AssignedTo', 'Assigned_By', 'AssignedBy',
     'User_DisplayName', 'UserDisplayName'
   ]);
-  
+
+  const districtFromRow = getByCandidates(row, ['district_name', 'District_Name', 'district', 'District']);
+
   return {
     monitorName: String(userName || monitorNameFromRow || `Monitor ${userId || 'Unknown'}`),
     monitorId: String(userId || process.env.MNE_API_USERID || process.env.MNE_API_USER_ID || 'N/A'),
+    district: String(userDistrict || districtFromRow || ''),
     schoolName: String(getByCandidates(row, ['school_name', 'School_Name', 'schoolname', 'SchoolName', 'School_Name']) || 'Unknown school'),
     schoolId: String(getByCandidates(row, ['school_id', 'School_Id', 'School_ID', 'schoolid', 'SchoolId', 'School_ID']) || ''),
     semis: String(getByCandidates(row, ['semis_code', 'SEMIS_Code', 'School_SEMIS_Code', 'SchoolSemisCode', 'School_SEMIS_Code']) || ''),
@@ -386,6 +433,99 @@ function filterAssignmentsByDate(rows, selectedDate) {
   return rows;
 }
 
+export function filterAssignmentsByMonth(rows, month) {
+  const targetMonth = String(month || '').trim();
+  if (!targetMonth) return rows;
+
+  return rows.filter((row) => {
+    const date = normalizeDateOnly(row.assignedDate || row.date || row.visitDate || row.VisitDate || row.AssignedDate);
+    return date && date.startsWith(targetMonth);
+  });
+}
+
+export async function fetchAssignedSchoolsForMonth(month, filters = {}) {
+  const headers = buildHeaders();
+  if (!Object.keys(headers).length) {
+    throw new Error('Live mode requires MNE_API_HEADERS_JSON in your .env file.');
+  }
+
+  const normalizedMonth = String(month || '').trim();
+  if (!normalizedMonth) {
+    return [];
+  }
+
+  const [year, rawMonth] = normalizedMonth.split('-').map(Number);
+  if (!year || !rawMonth) {
+    return [];
+  }
+
+  const selectedDistricts = normalizeDistrictList(filters.districts || filters.district || []);
+  const csvUsers = readMonitorAssignmentIdsFromCsv(process.env.MNE_API_USERIDS_CSV_PATH || './MA_ids.csv');
+  const envUserIds = (process.env.MNE_API_USERIDS || process.env.MNE_API_USERID || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const rawUsers = csvUsers.length
+    ? csvUsers
+    : envUserIds.map((userId) => ({ userId, userName: process.env.MNE_API_USERNAME || `Monitor ${userId}` }));
+
+  const users = rawUsers.filter(({ district }) => {
+    if (!selectedDistricts.length) return true;
+    if (!district) return false;
+    return matchesDistrictSelection(district, selectedDistricts);
+  });
+
+  if (!users.length) {
+    throw new Error('No user IDs configured for the selected district. Set MNE_API_USERIDS or MNE_API_USERIDS_CSV_PATH in your .env file.');
+  }
+
+  const base = (process.env.MNE_API_BASE_URL || 'https://mne.seld.gos.pk/Services/api').replace(/\/$/, '');
+  const endpointTemplate = String(process.env.MNE_API_ASSIGNMENTS_ENDPOINT || 'Users/AssignedSchoolStatus/{userId}/{year}').replace(/^\//, '');
+
+  const allRows = [];
+  const errors = [];
+  const concurrency = Math.max(1, Number(process.env.MNE_API_CONCURRENCY || 6));
+  // "Select all districts" can mean 300+ monitor users; stop starting new batches past
+  // the deadline so this stage doesn't consume the whole request budget on its own and
+  // starve the per-school visit lookup that runs afterward.
+  const deadlineAt = Number(filters.deadlineAt) || Infinity;
+
+  for (let index = 0; index < users.length; index += concurrency) {
+    if (Date.now() >= deadlineAt) break;
+    const batch = users.slice(index, index + concurrency);
+    await Promise.all(batch.map(async ({ userId, userName, district }) => {
+      const endpoint = resolveEndpointUrl(endpointTemplate, { year, userId });
+      const url = `${base}/${endpoint}`;
+
+      try {
+        const response = await getJsonWithRetry(url, headers, {}, deadlineAt);
+        const rows = parseRows(response);
+
+        if (rows.length > 0) {
+          allRows.push(...rows.map((row) => normalizeAssignmentRow(row, userId, userName, district)));
+          return;
+        }
+
+        const message = response?.Message || response?.message || '';
+        if (!isNoRecordMessage(message) && (isErrorLikeMessage(message) || message)) {
+          errors.push(`${url}: ${message || 'Empty response'}`);
+        }
+      } catch (error) {
+        errors.push(`${url}: ${error.message || String(error)}`);
+      }
+    }));
+  }
+
+  if (allRows.length === 0) {
+    const sample = errors.slice(0, 3).join(' | ');
+    throw new Error(`Could not fetch assigned schools for ${normalizedMonth}. ${sample}`);
+  }
+
+  const deduped = dedupeAssignments(allRows).filter((row) => matchesDistrictSelection(row.district, selectedDistricts));
+  return filterAssignmentsByMonth(deduped, normalizedMonth);
+}
+
 export async function fetchAssignedSchoolsForDate(selectedDate, filters = {}) {
   const headers = buildHeaders();
   if (!Object.keys(headers).length) {
@@ -395,6 +535,7 @@ export async function fetchAssignedSchoolsForDate(selectedDate, filters = {}) {
   const base = (process.env.MNE_API_BASE_URL || 'https://mne.seld.gos.pk/Services/api').replace(/\/$/, '');
   const endpointTemplate = String(process.env.MNE_API_ASSIGNMENTS_ENDPOINT || 'Users/AssignedSchoolStatus/{userId}/{year}').replace(/^\//, '');
   const year = new Date(selectedDate).getFullYear();
+  const selectedDistricts = normalizeDistrictList(filters.districts || filters.district || []);
 
   const csvUsers = readMonitorAssignmentIdsFromCsv(process.env.MNE_API_USERIDS_CSV_PATH || './MA_ids.csv');
   const envUserIds = (process.env.MNE_API_USERIDS || process.env.MNE_API_USERID || '')
@@ -402,44 +543,54 @@ export async function fetchAssignedSchoolsForDate(selectedDate, filters = {}) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const users = csvUsers.length
+  const rawUsers = csvUsers.length
     ? csvUsers
     : envUserIds.map((userId) => ({ userId, userName: process.env.MNE_API_USERNAME || `Monitor ${userId}` }));
 
+  const users = rawUsers.filter(({ district }) => {
+    if (!selectedDistricts.length) return true;
+    if (!district) return false;
+    return matchesDistrictSelection(district, selectedDistricts);
+  });
+
   if (!users.length) {
-    throw new Error('No user IDs configured. Set MNE_API_USERIDS or MNE_API_USERIDS_CSV_PATH in your .env file.');
+    throw new Error('No user IDs configured for the selected district. Set MNE_API_USERIDS or MNE_API_USERIDS_CSV_PATH in your .env file.');
   }
 
   const allRows = [];
   const errors = [];
+  const concurrency = Math.max(1, Number(process.env.MNE_API_CONCURRENCY || 6));
 
-  await Promise.all(users.map(async ({ userId, userName }) => {
-    const endpoint = resolveEndpointUrl(endpointTemplate, { year, userId });
-    const url = `${base}/${endpoint}`;
+  for (let index = 0; index < users.length; index += concurrency) {
+    const batch = users.slice(index, index + concurrency);
+    await Promise.all(batch.map(async ({ userId, userName, district }) => {
+      const endpoint = resolveEndpointUrl(endpointTemplate, { year, userId });
+      const url = `${base}/${endpoint}`;
 
-    try {
-      const response = await getJsonWithRetry(url, headers);
-      const rows = parseRows(response);
+      try {
+        const response = await getJsonWithRetry(url, headers);
+        const rows = parseRows(response);
 
-      if (rows.length > 0) {
-        allRows.push(...rows.map((row) => normalizeAssignmentRow(row, userId, userName)));
-        return;
+        if (rows.length > 0) {
+          allRows.push(...rows.map((row) => normalizeAssignmentRow(row, userId, userName, district)));
+          return;
+        }
+
+        const message = response?.Message || response?.message || '';
+        if (!isNoRecordMessage(message) && (isErrorLikeMessage(message) || message)) {
+          errors.push(`${url}: ${message || 'Empty response'}`);
+        }
+      } catch (error) {
+        errors.push(`${url}: ${error.message || String(error)}`);
       }
-
-      const message = response?.Message || response?.message || '';
-      if (!isNoRecordMessage(message) && (isErrorLikeMessage(message) || message)) {
-        errors.push(`${url}: ${message || 'Empty response'}`);
-      }
-    } catch (error) {
-      errors.push(`${url}: ${error.message || String(error)}`);
-    }
-  }));
+    }));
+  }
 
   if (allRows.length === 0) {
     const sample = errors.slice(0, 3).join(' | ');
     throw new Error(`Could not fetch assigned schools for ${selectedDate}. ${sample}`);
   }
 
-  const deduped = dedupeAssignments(allRows);
+  const deduped = dedupeAssignments(allRows).filter((row) => matchesDistrictSelection(row.district, selectedDistricts));
   return filterAssignmentsByDate(deduped, selectedDate);
 }

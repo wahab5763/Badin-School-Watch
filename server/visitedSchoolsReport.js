@@ -151,6 +151,26 @@ function getAbsentEmployeeNames(school) {
 }
 
 export function parseVisitedSchoolsReportFilters(query = {}) {
+  const districtCandidates = [
+    ...(Array.isArray(query.districts) ? query.districts : query.districts ? [query.districts] : []),
+    ...(query.district ? [query.district] : [])
+  ];
+
+  const districts = Array.from(new Set(
+    [...districtCandidates]
+      .flatMap((value) => {
+        if (value === null || value === undefined) return [];
+        if (Array.isArray(value)) return value.flatMap((entry) => String(entry || '').split(','));
+        if (typeof value === 'object') {
+          const candidate = value.name || value.district || value.label || value.value || value.title;
+          return candidate === undefined || candidate === null || candidate === '' ? [] : [String(candidate)];
+        }
+        return String(value).split(',');
+      })
+      .map((value) => String(value || '').trim())
+      .filter((value) => value && value.toLowerCase() !== 'all')
+  )).filter(Boolean);
+
   return {
     taluka: normalizeFilterValue(query.taluka),
     level: normalizeFilterValue(query.level),
@@ -160,7 +180,8 @@ export function parseVisitedSchoolsReportFilters(query = {}) {
     startMonth: normalizeFilterValue(query.startMonth, ''),
     endMonth: normalizeFilterValue(query.endMonth, ''),
     daysRange: Math.max(0, parseNumber(query.daysRange, 0)),
-    minRisk: Math.max(0, parseNumber(query.minRisk, 0))
+    minRisk: Math.max(0, parseNumber(query.minRisk, 0)),
+    districts
   };
 }
 
@@ -340,7 +361,9 @@ function buildAssignmentReportData(payload, filters, assignmentRows = []) {
 
   const filteredAssignments = assignmentRowsByDate.filter((row) => {
     const talukaMatch = filters.taluka === 'all' || String(row.taluka || '') === String(filters.taluka || '');
-    return talukaMatch;
+    const districtList = Array.isArray(filters.districts) ? filters.districts : [];
+    const districtMatch = !districtList.length || districtList.some((district) => String(row.district || '').trim().toLowerCase() === String(district).trim().toLowerCase());
+    return talukaMatch && districtMatch;
   });
 
   const monitorMap = new Map();
@@ -416,7 +439,8 @@ export function buildMonitorAssignmentSummaryPdfWithAssignments(payload, filters
 
     textLine(doc, `Generated: ${formatDateTimeWithPeriod(report.generatedAt)}`, { fontSize: 9, gapAfter: 2, color: '#475569' });
     textLine(doc, `Selected Date: ${report.filters.selectedDate}${Number(report.filters.daysRange) > 0 ? ` (±${report.filters.daysRange} days)` : ''}`, { fontSize: 9, gapAfter: 2, color: '#475569' });
-    textLine(doc, `Filters: taluka=${report.filters.taluka}, level=${report.filters.level}, gender=${report.filters.gender}, status=${report.filters.status}, minRisk=${report.filters.minRisk}`, { fontSize: 9, gapAfter: fetchError ? 4 : 10, color: '#475569' });
+    const districtLabel = Array.isArray(report.filters.districts) && report.filters.districts.length ? report.filters.districts.join(', ') : 'All districts';
+    textLine(doc, `Filters: taluka=${report.filters.taluka}, level=${report.filters.level}, gender=${report.filters.gender}, status=${report.filters.status}, minRisk=${report.filters.minRisk}, districts=${districtLabel}`, { fontSize: 9, gapAfter: fetchError ? 4 : 10, color: '#475569' });
 
     if (fetchError) {
       textLine(doc, `Assignment API note: ${fetchError}`, { fontSize: 9, gapAfter: 10, color: '#7c2d12' });

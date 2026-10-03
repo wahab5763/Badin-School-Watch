@@ -82,12 +82,18 @@ export function readMonitorAssignmentIdsFromCsv(csvPath) {
       return ['username', 'user_name', 'name', 'monitorname', 'monitor_name', 'fullname', 'full_name'].includes(normalized);
     });
 
+    const districtKey = keys.find((key) => {
+      const normalized = normalizeCsvHeader(key);
+      return ['district', 'districtname', 'district_name'].includes(normalized);
+    });
+
     const userId = idKey ? String(row[idKey] || '').trim() : '';
     const userName = nameKey ? String(row[nameKey] || '').trim() : '';
+    const district = districtKey ? String(row[districtKey] || '').trim() : '';
 
     if (!userId || seen.has(userId)) continue;
     seen.add(userId);
-    monitorIds.push({ userId, userName });
+    monitorIds.push({ userId, userName, district });
   }
 
   if (!monitorIds.length && rows.length > 0) {
@@ -98,10 +104,39 @@ export function readMonitorAssignmentIdsFromCsv(csvPath) {
         const userId = String(row[firstKey] || '').trim();
         if (!userId || seen.has(userId)) continue;
         seen.add(userId);
-        monitorIds.push({ userId, userName: '' });
+        monitorIds.push({ userId, userName: '', district: '' });
       }
     }
   }
 
   return monitorIds;
+}
+
+function sortDistrictNames(a, b) {
+  return new Intl.Collator('en', { numeric: true, sensitivity: 'base' }).compare(a, b);
+}
+
+export function readMonitorAssignmentDistrictsFromCsv(csvPath) {
+  const rows = parseCsvRows(csvPath);
+  if (!rows.length) return [];
+
+  const seen = new Set();
+  const districts = [];
+
+  for (const row of rows) {
+    const keys = Object.keys(row || {});
+    if (!keys.length) continue;
+
+    const districtKey = keys.find((key) => {
+      const normalized = normalizeCsvHeader(key);
+      return ['district', 'districtname', 'district_name'].includes(normalized);
+    });
+
+    const district = districtKey ? String(row[districtKey] || '').trim() : '';
+    if (!district || seen.has(district)) continue;
+    seen.add(district);
+    districts.push(district);
+  }
+
+  return districts.sort(sortDistrictNames);
 }

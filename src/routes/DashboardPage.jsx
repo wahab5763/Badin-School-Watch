@@ -23,6 +23,8 @@ import {
   buildMonitorAssignmentsReportUrl,
   buildVisitedSchoolsReportUrl,
   buildEmployeeAttendanceReportUrl,
+  buildMonitorPerformanceReportUrl,
+  fetchMonitorAssignmentDistricts,
   fetchSchoolVisitDetail
 } from '../lib/api';
 import { useDashboard } from '../lib/useDashboard';
@@ -605,16 +607,157 @@ export default function DashboardPage() {
   ]);
 
   const options = data?.options || { talukas: [], levels: [], genders: [], statuses: [] };
+  const [monitorAssignmentDistrictOptions, setMonitorAssignmentDistrictOptions] = useState([]);
+  const [monitorAssignmentDistricts, setMonitorAssignmentDistricts] = useState([]);
+  const [monitorPerformanceDistrictOptions, setMonitorPerformanceDistrictOptions] = useState([]);
+  const [monitorPerformanceDistricts, setMonitorPerformanceDistricts] = useState([]);
+  const [showMonitorAssignmentDistrictPicker, setShowMonitorAssignmentDistrictPicker] = useState(false);
+  const [showMonitorPerformanceDistrictPicker, setShowMonitorPerformanceDistrictPicker] = useState(false);
+  const [monitorPerformanceMonth, setMonitorPerformanceMonth] = useState(() => new Date().toISOString().slice(0, 7));
+
+  useEffect(() => {
+    const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+    let active = true;
+
+    const dashboardDistricts = Array.isArray(data?.districts)
+      ? data.districts
+      : [];
+    const schoolDistricts = (data?.schools || []).map((school) => school.district).filter(Boolean);
+    const baseDistricts = [...new Set([...dashboardDistricts, ...schoolDistricts])];
+
+    fetchMonitorAssignmentDistricts()
+      .then((districts) => {
+        if (!active) return;
+        const nextAssignmentDistricts = [...new Set([...(districts || []), ...baseDistricts])].sort((a, b) => collator.compare(a, b));
+        const nextPerformanceDistricts = [...nextAssignmentDistricts];
+
+        setMonitorAssignmentDistrictOptions(nextAssignmentDistricts);
+        setMonitorAssignmentDistricts((current) => {
+          const validCurrent = current.filter((district) => nextAssignmentDistricts.includes(district));
+          if (validCurrent.length === current.length && validCurrent.length > 0) return current;
+          return validCurrent.length ? validCurrent : [...nextAssignmentDistricts];
+        });
+
+        setMonitorPerformanceDistrictOptions(nextPerformanceDistricts);
+        setMonitorPerformanceDistricts((current) => {
+          const validCurrent = current.filter((district) => nextPerformanceDistricts.includes(district));
+          if (validCurrent.length === current.length && validCurrent.length > 0) return current;
+          return validCurrent.length ? validCurrent : [...nextPerformanceDistricts];
+        });
+      })
+      .catch(() => {
+        if (!active) return;
+        const nextAssignmentDistricts = [...new Set(baseDistricts)].sort((a, b) => collator.compare(a, b));
+        const nextPerformanceDistricts = [...nextAssignmentDistricts];
+
+        setMonitorAssignmentDistrictOptions(nextAssignmentDistricts);
+        setMonitorAssignmentDistricts((current) => {
+          const validCurrent = current.filter((district) => nextAssignmentDistricts.includes(district));
+          if (validCurrent.length === current.length && validCurrent.length > 0) return current;
+          return validCurrent.length ? validCurrent : [...nextAssignmentDistricts];
+        });
+
+        setMonitorPerformanceDistrictOptions(nextPerformanceDistricts);
+        setMonitorPerformanceDistricts((current) => {
+          const validCurrent = current.filter((district) => nextPerformanceDistricts.includes(district));
+          if (validCurrent.length === current.length && validCurrent.length > 0) return current;
+          return validCurrent.length ? validCurrent : [...nextPerformanceDistricts];
+        });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [data]);
 
   const handleDownloadReport = React.useCallback(() => {
     const reportUrl = buildVisitedSchoolsReportUrl(filters);
     window.open(reportUrl, '_blank', 'noopener,noreferrer');
   }, [filters]);
 
+  const [reportDownload, setReportDownload] = useState(null);
+
+  const runReportDownload = React.useCallback(async ({ key, label, url, filename }) => {
+    const startedAt = Date.now();
+    setReportDownload({ key, label, progress: 5 });
+
+    const interval = setInterval(() => {
+      setReportDownload((current) => {
+        if (!current || current.key !== key) return current;
+        const elapsedSeconds = (Date.now() - startedAt) / 1000;
+        // Simulated progress: no server-side progress feed, so ease toward (but never reach) 92%.
+        const nextProgress = Math.min(92, 5 + elapsedSeconds * 3);
+        return { ...current, progress: nextProgress };
+      });
+    }, 300);
+
+    try {
+      const response = await fetch(url, { method: 'GET', cache: 'no-store' });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const payload = await response.json();
+          if (payload?.error) detail = `: ${payload.error}`;
+        } catch {}
+        throw new Error(`Failed to generate report (${response.status})${detail}`);
+      }
+      const blob = await response.blob();
+      setReportDownload((current) => (current && current.key === key ? { ...current, progress: 100 } : current));
+
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
+    } catch (error) {
+      window.alert(error?.message || 'Failed to generate report.');
+    } finally {
+      clearInterval(interval);
+      setTimeout(() => {
+        setReportDownload((current) => (current && current.key === key ? null : current));
+      }, 400);
+    }
+  }, []);
+
   const handleDownloadMonitorAssignments = React.useCallback(() => {
-    const reportUrl = buildMonitorAssignmentsReportUrl(filters);
-    window.open(reportUrl, '_blank', 'noopener,noreferrer');
-  }, [filters]);
+    const selectedDistricts = monitorAssignmentDistricts.length ? monitorAssignmentDistricts : monitorAssignmentDistrictOptions;
+    const reportUrl = buildMonitorAssignmentsReportUrl({ ...filters, districts: selectedDistricts });
+    setShowMonitorAssignmentDistrictPicker(false);
+    runReportDownload({
+      key: 'monitor-assignments',
+      label: 'Generating monitor assignments PDF…',
+      url: reportUrl,
+      filename: `monitor-assignments-${filters.selectedDate || 'report'}.pdf`
+    });
+  }, [filters, monitorAssignmentDistricts, monitorAssignmentDistrictOptions, runReportDownload]);
+
+  const isAllMonitorAssignmentDistrictsSelected = monitorAssignmentDistrictOptions.length > 0
+    && monitorAssignmentDistricts.length === monitorAssignmentDistrictOptions.length;
+
+  const handleMonitorAssignmentsClearAll = React.useCallback(() => {
+    setMonitorAssignmentDistricts([]);
+  }, []);
+
+  const handleMonitorAssignmentsToggleAll = React.useCallback(() => {
+    setMonitorAssignmentDistricts((current) => {
+      if (current.length === monitorAssignmentDistrictOptions.length && monitorAssignmentDistrictOptions.length > 0) {
+        return [];
+      }
+      return [...monitorAssignmentDistrictOptions];
+    });
+  }, [monitorAssignmentDistrictOptions]);
+
+  const toggleMonitorAssignmentDistrict = React.useCallback((district) => {
+    setMonitorAssignmentDistricts((current) => {
+      if (current.includes(district)) {
+        return current.filter((item) => item !== district);
+      }
+      return [...current, district];
+    });
+  }, []);
 
   const handleDownloadEmployeeAttendance = React.useCallback(() => {
     const reportUrl = buildEmployeeAttendanceReportUrl({
@@ -624,6 +767,21 @@ export default function DashboardPage() {
     });
     window.open(reportUrl, '_blank', 'noopener,noreferrer');
   }, [filters.selectedDate, attendanceFilters]);
+
+  const handleDownloadMonitorPerformance = React.useCallback(() => {
+    const selectedDistricts = monitorPerformanceDistricts.length ? monitorPerformanceDistricts : monitorPerformanceDistrictOptions;
+    const reportUrl = buildMonitorPerformanceReportUrl({
+      month: monitorPerformanceMonth,
+      districts: selectedDistricts
+    });
+    setShowMonitorPerformanceDistrictPicker(false);
+    runReportDownload({
+      key: 'monitor-performance',
+      label: 'Generating monitor performance workbook…',
+      url: reportUrl,
+      filename: `monitor-performance-${monitorPerformanceMonth || 'report'}.xlsx`
+    });
+  }, [monitorPerformanceDistricts, monitorPerformanceDistrictOptions, monitorPerformanceMonth, runReportDownload]);
 
   return (
     <div className="min-h-screen bg-[#ECF2F6] text-slatebrand">
@@ -709,13 +867,85 @@ export default function DashboardPage() {
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={handleDownloadMonitorAssignments}
+                    onClick={() => setShowMonitorAssignmentDistrictPicker(true)}
                     className="shrink-0 rounded-full border border-slatebrand/10 bg-white px-4 py-2 text-sm font-medium text-slatebrand transition hover:-translate-y-px"
                   >
                     Download monitor assignments PDF
                   </button>
                 </div>
               </div>
+
+              {showMonitorAssignmentDistrictPicker && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slatebrand/35 p-4 backdrop-blur-sm">
+                  <div className="w-full max-w-2xl rounded-5xl border border-slatebrand/10 bg-white p-5 shadow-2xl">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-xs uppercase tracking-[0.24em] text-slatebrand/45">District filter</div>
+                        <h3 className="mt-2 text-xl font-semibold text-slatebrand">Choose districts for the monitor assignment PDF</h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowMonitorAssignmentDistrictPicker(false)}
+                        className="rounded-full border border-slatebrand/10 p-2 text-slatebrand/60 transition hover:text-slatebrand"
+                        aria-label="Close district picker"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-2 rounded-full border border-slatebrand/10 bg-slatebrand/5 px-3 py-1.5 text-xs font-medium text-slatebrand">
+                        <input
+                          type="checkbox"
+                          checked={isAllMonitorAssignmentDistrictsSelected}
+                          onChange={handleMonitorAssignmentsToggleAll}
+                          className="h-4 w-4 rounded border-slatebrand/20 text-signal"
+                        />
+                        All districts
+                      </label>
+                      <button type="button" onClick={handleMonitorAssignmentsClearAll} className="rounded-full border border-slatebrand/10 bg-white px-3 py-1.5 text-xs font-medium text-slatebrand">Clear all</button>
+                    </div>
+
+                    <div className="mt-4 grid max-h-72 gap-2 overflow-y-auto rounded-3xl border border-slatebrand/10 bg-slatebrand/3 p-3 sm:grid-cols-2">
+                      {monitorAssignmentDistrictOptions.length ? (
+                        monitorAssignmentDistrictOptions.map((district) => (
+                          <label key={district} className="flex items-center gap-3 rounded-2xl border border-slatebrand/10 bg-white px-3 py-2 text-sm text-slatebrand">
+                            <input
+                              type="checkbox"
+                              checked={monitorAssignmentDistricts.includes(district)}
+                              onChange={() => toggleMonitorAssignmentDistrict(district)}
+                              className="h-4 w-4 rounded border-slatebrand/20 text-signal"
+                            />
+                            <span>{district}</span>
+                          </label>
+                        ))
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-slatebrand/20 px-3 py-4 text-sm text-slatebrand/60">
+                          No districts available for the current dataset.
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-5 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowMonitorAssignmentDistrictPicker(false)}
+                        className="rounded-full border border-slatebrand/10 px-4 py-2 text-sm font-medium text-slatebrand"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDownloadMonitorAssignments}
+                        disabled={!monitorAssignmentDistrictOptions.length || !!reportDownload}
+                        className="rounded-full bg-slatebrand px-4 py-2 text-sm font-medium text-white transition hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Generate PDF
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-5xl border border-slatebrand/8 bg-white/70 px-5 py-4 shadow-soft">
                 <div className="flex items-start justify-between gap-3">
@@ -763,7 +993,153 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
+
+              <div className="rounded-5xl border border-slatebrand/8 bg-white/70 px-5 py-4 shadow-soft">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.24em] text-slatebrand/45">Monitor performance</div>
+                  <div className="mt-1 text-sm text-slatebrand/70">Monthly monitor summary with daily assigned/visited totals and working-day counts.</div>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs uppercase tracking-[0.18em] text-slatebrand/45">Performance month</span>
+                    <input
+                      type="month"
+                      value={monitorPerformanceMonth}
+                      onChange={(e) => setMonitorPerformanceMonth(e.target.value)}
+                      className="w-full rounded-2xl border border-slatebrand/10 bg-white px-4 py-3 outline-none focus:border-signal"
+                    />
+                  </label>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowMonitorPerformanceDistrictPicker(true)}
+                    className="shrink-0 rounded-full border border-slatebrand/10 bg-slatebrand/5 px-4 py-2 text-sm font-medium text-slatebrand transition hover:-translate-y-px"
+                  >
+                    Download monitor performance workbook
+                  </button>
+                </div>
+              </div>
             </div>
+
+            {showMonitorPerformanceDistrictPicker && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-slatebrand/35 p-4 backdrop-blur-sm">
+                <div className="w-full max-w-2xl rounded-5xl border border-slatebrand/10 bg-white p-5 shadow-2xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.24em] text-slatebrand/45">District filter</div>
+                      <h3 className="mt-2 text-xl font-semibold text-slatebrand">Choose districts for the monitor performance workbook</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowMonitorPerformanceDistrictPicker(false)}
+                      className="rounded-full border border-slatebrand/10 p-2 text-slatebrand/60 transition hover:text-slatebrand"
+                      aria-label="Close district picker"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-2 rounded-full border border-slatebrand/10 bg-slatebrand/5 px-3 py-1.5 text-xs font-medium text-slatebrand">
+                      <input
+                        type="checkbox"
+                        checked={monitorPerformanceDistrictOptions.length > 0 && monitorPerformanceDistricts.length === monitorPerformanceDistrictOptions.length}
+                        onChange={() => {
+                          setMonitorPerformanceDistricts((current) => {
+                            if (current.length === monitorPerformanceDistrictOptions.length && monitorPerformanceDistrictOptions.length > 0) {
+                              return [];
+                            }
+                            return [...monitorPerformanceDistrictOptions];
+                          });
+                        }}
+                        className="h-4 w-4 rounded border-slatebrand/20 text-signal"
+                      />
+                      All districts
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setMonitorPerformanceDistricts([...monitorPerformanceDistrictOptions])}
+                      className="rounded-full border border-slatebrand/10 bg-white px-3 py-1.5 text-xs font-medium text-slatebrand"
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMonitorPerformanceDistricts([])}
+                      className="rounded-full border border-slatebrand/10 bg-white px-3 py-1.5 text-xs font-medium text-slatebrand"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid max-h-72 gap-2 overflow-y-auto rounded-3xl border border-slatebrand/10 bg-slatebrand/3 p-3 sm:grid-cols-2">
+                    {monitorPerformanceDistrictOptions.length ? (
+                      monitorPerformanceDistrictOptions.map((district) => (
+                        <label key={district} className="flex items-center gap-3 rounded-2xl border border-slatebrand/10 bg-white px-3 py-2 text-sm text-slatebrand">
+                          <input
+                            type="checkbox"
+                            checked={monitorPerformanceDistricts.includes(district)}
+                            onChange={() => {
+                              setMonitorPerformanceDistricts((current) => {
+                                if (current.includes(district)) {
+                                  return current.filter((item) => item !== district);
+                                }
+                                return [...current, district];
+                              });
+                            }}
+                            className="h-4 w-4 rounded border-slatebrand/20 text-signal"
+                          />
+                          <span>{district}</span>
+                        </label>
+                      ))
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-slatebrand/20 px-3 py-4 text-sm text-slatebrand/60">
+                        No districts available for the current dataset.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowMonitorPerformanceDistrictPicker(false)}
+                      className="rounded-full border border-slatebrand/10 px-4 py-2 text-sm font-medium text-slatebrand"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDownloadMonitorPerformance}
+                      disabled={!monitorPerformanceDistrictOptions.length || !!reportDownload}
+                      className="rounded-full bg-slatebrand px-4 py-2 text-sm font-medium text-white transition hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Generate workbook
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {reportDownload && (
+              <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slatebrand/40 p-4 backdrop-blur-sm">
+                <div className="w-full max-w-sm rounded-3xl border border-slatebrand/10 bg-white p-6 shadow-2xl">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="h-5 w-5 animate-spin text-signal" />
+                    <div className="text-sm font-medium text-slatebrand">{reportDownload.label}</div>
+                  </div>
+                  <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slatebrand/10">
+                    <div
+                      className="h-full rounded-full bg-signal transition-all duration-300 ease-out"
+                      style={{ width: `${reportDownload.progress}%` }}
+                    />
+                  </div>
+                  <div className="mt-2 text-xs text-slatebrand/50">
+                    {Math.round(reportDownload.progress)}% · large districts can take a few minutes
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="mt-4 grid gap-6">
               <VisitedSchoolsTable
